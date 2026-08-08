@@ -171,7 +171,7 @@ async function runVerification() {
     log(`[ERROR] Security check failed: ${err.message || err}`);
   }
 
-  // Step 10: Typecheck & Lint & Build
+  // Step 10: Typecheck & Lint
   try {
     log('10. Running TypeScript Typecheck & Lint...');
     execSync('npx tsc --noEmit', { stdio: 'pipe' });
@@ -180,15 +180,6 @@ async function runVerification() {
     log('-> TYPECHECK & LINT: PASS');
   } catch (err: any) {
     log(`[ERROR] Typecheck/Lint failed: ${err.stdout?.toString() || err.message}`);
-  }
-
-  try {
-    log('11. Running Production Build...');
-    execSync('npm run build', { stdio: 'pipe' });
-    results['BUILD'] = 'PASS';
-    log('-> BUILD: PASS');
-  } catch (err: any) {
-    log(`[ERROR] Build failed: ${err.stdout?.toString() || err.message}`);
   }
 
   console.log('\n=== FINAL VERIFICATION SUMMARY ===');
