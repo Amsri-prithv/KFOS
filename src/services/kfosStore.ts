@@ -294,10 +294,8 @@ class KFOSStore {
   // Server-Authoritative Adders
   public async addExpense(expense: Omit<ExpenseRecord, 'id'>): Promise<{ success: boolean; data?: ExpenseRecord; error?: string }> {
     try {
-      const headers = await this.getAuthHeaders();
-      const res = await fetch('/api/firestore/expenses', {
+      const res = await this.fetchWithAuth('/api/firestore/expenses', {
         method: 'POST',
-        headers,
         body: JSON.stringify(expense),
       }).then((r) => r.json());
       if (res.success && res.data) {
@@ -313,10 +311,8 @@ class KFOSStore {
 
   public async addLead(lead: Omit<Lead, 'id' | 'createdAt'>): Promise<{ success: boolean; data?: Lead; error?: string }> {
     try {
-      const headers = await this.getAuthHeaders();
-      const res = await fetch('/api/firestore/collection/leads', {
+      const res = await this.fetchWithAuth('/api/firestore/collection/leads', {
         method: 'POST',
-        headers,
         body: JSON.stringify(lead),
       }).then((r) => r.json());
       if (res.success && res.data) {
@@ -334,10 +330,8 @@ class KFOSStore {
     const item = this.leads.find((l) => l.id === id);
     if (!item) return false;
     try {
-      const headers = await this.getAuthHeaders();
-      const res = await fetch(`/api/firestore/collection/leads/${id}`, {
+      const res = await this.fetchWithAuth(`/api/firestore/collection/leads/${id}`, {
         method: 'PATCH',
-        headers,
         body: JSON.stringify({ status }),
       }).then((r) => r.json());
       if (res.success && res.data) {
@@ -353,10 +347,8 @@ class KFOSStore {
 
   public async addCampaign(campaign: Omit<Campaign, 'id'>): Promise<{ success: boolean; data?: Campaign; error?: string }> {
     try {
-      const headers = await this.getAuthHeaders();
-      const res = await fetch('/api/firestore/collection/campaigns', {
+      const res = await this.fetchWithAuth('/api/firestore/collection/campaigns', {
         method: 'POST',
-        headers,
         body: JSON.stringify(campaign),
       }).then((r) => r.json());
       if (res.success && res.data) {
@@ -372,10 +364,8 @@ class KFOSStore {
 
   public async addSupportTicket(ticket: Omit<SupportTicket, 'id' | 'ticketNumber' | 'createdAt'>): Promise<{ success: boolean; data?: SupportTicket; error?: string }> {
     try {
-      const headers = await this.getAuthHeaders();
-      const res = await fetch('/api/firestore/collection/supportTickets', {
+      const res = await this.fetchWithAuth('/api/firestore/collection/supportTickets', {
         method: 'POST',
-        headers,
         body: JSON.stringify(ticket),
       }).then((r) => r.json());
       if (res.success && res.data) {
@@ -393,10 +383,8 @@ class KFOSStore {
     const item = this.supportTickets.find((t) => t.id === id);
     if (!item) return false;
     try {
-      const headers = await this.getAuthHeaders();
-      const res = await fetch(`/api/firestore/collection/supportTickets/${id}`, {
+      const res = await this.fetchWithAuth(`/api/firestore/collection/supportTickets/${id}`, {
         method: 'PATCH',
-        headers,
         body: JSON.stringify({ status }),
       }).then((r) => r.json());
       if (res.success && res.data) {
@@ -412,10 +400,8 @@ class KFOSStore {
 
   public async addTask(task: Omit<TaskItem, 'id'>): Promise<{ success: boolean; data?: TaskItem; error?: string }> {
     try {
-      const headers = await this.getAuthHeaders();
-      const res = await fetch('/api/firestore/collection/tasks', {
+      const res = await this.fetchWithAuth('/api/firestore/collection/tasks', {
         method: 'POST',
-        headers,
         body: JSON.stringify(task),
       }).then((r) => r.json());
       if (res.success && res.data) {
@@ -433,10 +419,8 @@ class KFOSStore {
     const item = this.tasks.find((t) => t.id === id);
     if (!item) return false;
     try {
-      const headers = await this.getAuthHeaders();
-      const res = await fetch(`/api/firestore/collection/tasks/${id}`, {
+      const res = await this.fetchWithAuth(`/api/firestore/collection/tasks/${id}`, {
         method: 'PATCH',
-        headers,
         body: JSON.stringify({ status }),
       }).then((r) => r.json());
       if (res.success && res.data) {
@@ -461,10 +445,8 @@ class KFOSStore {
     if (existing) return existing;
 
     try {
-      const headers = await this.getAuthHeaders();
-      const res = await fetch('/api/firestore/customers', {
+      const res = await this.fetchWithAuth('/api/firestore/customers', {
         method: 'POST',
-        headers,
         body: JSON.stringify({
           name: cleanName,
           place: cleanPlace || 'Tamil Nadu',
@@ -548,10 +530,8 @@ class KFOSStore {
       // Create Customer Authoritatively
       const customer = await this.findOrCreateCustomer(customerName, customerPlace);
 
-      const headers = await this.getAuthHeaders();
-      const res = await fetch('/api/firestore/orders', {
+      const res = await this.fetchWithAuth('/api/firestore/orders', {
         method: 'POST',
-        headers,
         body: JSON.stringify({
           customerId: customer.id,
           customerName: customer.name,
@@ -619,10 +599,8 @@ class KFOSStore {
     if (!customer) return { success: false, error: 'Customer not found' };
 
     try {
-      const headers = await this.getAuthHeaders();
-      const res = await fetch('/api/firestore/collection/samples', {
+      const res = await this.fetchWithAuth('/api/firestore/collection/samples', {
         method: 'POST',
-        headers,
         body: JSON.stringify({
           customerId: customer.id,
           customerName: customer.name,
@@ -668,10 +646,8 @@ class KFOSStore {
     const s = this.samples.find((samp) => samp.id === sampleId);
     if (!s) return false;
     try {
-      const headers = await this.getAuthHeaders();
-      const res = await fetch(`/api/firestore/collection/samples/${sampleId}`, {
+      const res = await this.fetchWithAuth(`/api/firestore/collection/samples/${sampleId}`, {
         method: 'PATCH',
-        headers,
         body: JSON.stringify({ followUpStatus: 'Completed', followUpNotes: notes }),
       }).then((r) => r.json());
       if (res.success && res.data) {
@@ -694,10 +670,8 @@ class KFOSStore {
     if (order.isReturned) return { success: false, error: 'Order has already been returned' };
 
     try {
-      const headers = await this.getAuthHeaders();
-      const res = await fetch('/api/firestore/collection/returns', {
+      const res = await this.fetchWithAuth('/api/firestore/collection/returns', {
         method: 'POST',
-        headers,
         body: JSON.stringify({
           orderId: order.id,
           orderNumber: order.orderNumber,
@@ -781,10 +755,8 @@ class KFOSStore {
     const custId = order ? order.customerId : (customerId || 'cust-1');
 
     try {
-      const headers = await this.getAuthHeaders();
-      const res = await fetch('/api/firestore/payments', {
+      const res = await this.fetchWithAuth('/api/firestore/payments', {
         method: 'POST',
-        headers,
         body: JSON.stringify({
           customerId: custId,
           orderId: order ? order.id : undefined,
