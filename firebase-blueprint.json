@@ -1,0 +1,226 @@
+{
+  "entities": {
+    "customers": {
+      "title": "Customer",
+      "description": "KFOS Field Customer Profiles",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "businessName": { "type": "string" },
+        "place": { "type": "string" },
+        "phone": { "type": "string" },
+        "outstandingBalance": { "type": "number" },
+        "free200mlSamplesUsed": { "type": "number" },
+        "totalOrdersCount": { "type": "number" },
+        "totalSpent": { "type": "number" },
+        "isArchived": { "type": "boolean" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["name", "phone", "place"]
+    },
+    "products": {
+      "title": "Product",
+      "description": "Fragrance Products Catalog",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "category": { "type": "string" },
+        "qualityGrade": { "type": "string" },
+        "buyPrice": { "type": "number" },
+        "salePrice": { "type": "number" },
+        "baseProfit": { "type": "number" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["name", "salePrice"]
+    },
+    "productVariants": {
+      "title": "Product Variant",
+      "description": "Product Variants",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "productId": { "type": "string" },
+        "variantName": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      }
+    },
+    "orders": {
+      "title": "Order",
+      "description": "KFOS Sales Orders",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "orderNumber": { "type": "string" },
+        "customerId": { "type": "string" },
+        "customerName": { "type": "string" },
+        "customerPlace": { "type": "string" },
+        "totalAmount": { "type": "number" },
+        "totalDiscount": { "type": "number" },
+        "totalProfit": { "type": "number" },
+        "paidAmount": { "type": "number" },
+        "paymentStatus": { "type": "string" },
+        "orderDate": { "type": "string" },
+        "isReturned": { "type": "boolean" },
+        "source": { "type": "string" },
+        "isArchived": { "type": "boolean" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["customerId", "orderNumber"]
+    },
+    "orderItems": {
+      "title": "Order Item",
+      "description": "Individual items in an order",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "orderId": { "type": "string" },
+        "customerId": { "type": "string" },
+        "productVariant": { "type": "string" },
+        "quality": { "type": "string" },
+        "quantity": { "type": "number" },
+        "totalAmount": { "type": "number" },
+        "totalProfit": { "type": "number" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      }
+    },
+    "inventory": {
+      "title": "Inventory Pool",
+      "description": "Shared Liquid Stock Pool",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "quality": { "type": "string" },
+        "currentStock5L": { "type": "number" },
+        "lowStockThreshold": { "type": "number" },
+        "lastRestockedAt": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      }
+    },
+    "inventoryTransactions": {
+      "title": "Inventory Transaction",
+      "description": "Stock deduction and restock audit log",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "qualityGrade": { "type": "string" },
+        "type": { "type": "string" },
+        "quantity5L": { "type": "number" },
+        "reason": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      }
+    },
+    "payments": {
+      "title": "Payment Record",
+      "description": "Customer Payment Receipts",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "orderId": { "type": "string" },
+        "customerId": { "type": "string" },
+        "amount": { "type": "number" },
+        "paymentMethod": { "type": "string" },
+        "receivedAt": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      }
+    },
+    "leads": {
+      "title": "Lead",
+      "description": "Sales Leads",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "status": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      }
+    },
+    "campaigns": {
+      "title": "Campaign",
+      "description": "Marketing Campaigns",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string" },
+        "status": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      }
+    },
+    "supportTickets": {
+      "title": "Support Ticket",
+      "description": "Customer Support Tickets",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string" },
+        "status": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      }
+    },
+    "tasks": {
+      "title": "Task",
+      "description": "Operations Tasks",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string" },
+        "status": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      }
+    },
+    "expenses": {
+      "title": "Expense Record",
+      "description": "Field and Operating Expenses",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string" },
+        "category": { "type": "string" },
+        "amount": { "type": "number" },
+        "date": { "type": "string" },
+        "loggedBy": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      }
+    },
+    "notifications": {
+      "title": "Notification",
+      "description": "System Notifications",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string" },
+        "message": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      }
+    },
+    "auditLogs": {
+      "title": "Audit Log",
+      "description": "Timeline Audit Events",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "type": { "type": "string" },
+        "title": { "type": "string" },
+        "description": { "type": "string" },
+        "timestamp": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      }
+    }
+  }
+}

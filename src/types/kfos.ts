@@ -1,6 +1,22 @@
 export type QualityGrade = 'Eco' | 'Standard' | 'Premium';
 export type ProductVariant = 'Room Freshener' | 'Bathroom Freshener';
 
+export type UserRole =
+  | 'Founder'
+  | 'Admin'
+  | 'Sales'
+  | 'Operations'
+  | 'Finance'
+  | 'Support';
+
+export interface UserProfile {
+  id: string;
+  name: string;
+  email: string;
+  role: UserRole;
+  avatarUrl?: string;
+}
+
 export interface QualityPricing {
   buyPrice: number;
   salePrice: number;
@@ -107,6 +123,16 @@ export interface PaymentRecord {
   notes?: string;
 }
 
+export interface ExpenseRecord {
+  id: string;
+  title: string;
+  category: 'Fuel & Field Travel' | 'Raw Essence' | 'Packaging & Cans' | 'Logistics' | 'Sales Commission' | 'Utilities';
+  amount: number;
+  date: string;
+  loggedBy: string;
+  notes?: string;
+}
+
 export interface ReturnRecord {
   id: string;
   orderId: string;
@@ -123,6 +149,24 @@ export interface ReturnRecord {
   totalRefundAmount: number;
   returnedAt: string;
   reason: string;
+}
+
+export interface AIAgent {
+  id: string;
+  name: string;
+  role: 'CEO Agent' | 'Sales Agent' | 'Marketing Agent' | 'Support Agent' | 'Inventory Agent' | 'Finance Agent';
+  description: string;
+  status: 'Active' | 'Standby' | 'Running';
+  allowedTools: string[];
+  lastRunAt?: string;
+}
+
+export interface AutomationRule {
+  id: string;
+  name: string;
+  trigger: 'New Order' | 'Low Stock' | 'Payment Pending' | '3-Day Sample Due';
+  action: 'Send Telegram Alert' | 'Schedule Follow-Up' | 'Generate Invoice' | 'Log Audit Event';
+  isActive: boolean;
 }
 
 export interface TimelineEvent {

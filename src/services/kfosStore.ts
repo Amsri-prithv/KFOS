@@ -226,6 +226,83 @@ class KFOSStore {
 
   constructor() {
     this.loadFromStorage();
+    this.syncWithFirestore();
+  }
+
+  private async syncWithFirestore() {
+    try {
+      // Fetch customers from Firestore
+      const custRes = await fetch('/api/firestore/customers').then((r) => r.json());
+      if (custRes.success) {
+        if (custRes.data && custRes.data.length > 0) {
+          this.customers = custRes.data;
+        } else {
+          for (const c of SEED_CUSTOMERS) {
+            await fetch('/api/firestore/customers', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(c),
+            });
+          }
+        }
+      }
+
+      // Fetch orders from Firestore
+      const ordRes = await fetch('/api/firestore/orders').then((r) => r.json());
+      if (ordRes.success) {
+        if (ordRes.data && ordRes.data.length > 0) {
+          this.orders = ordRes.data;
+        } else {
+          for (const o of SEED_ORDERS) {
+            await fetch('/api/firestore/orders', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(o),
+            });
+          }
+        }
+      }
+
+      // Fetch inventory from Firestore
+      const invRes = await fetch('/api/firestore/inventory').then((r) => r.json());
+      if (invRes.success) {
+        if (invRes.data && invRes.data.length > 0) {
+          this.stocks = invRes.data;
+        } else {
+          for (const s of SEED_STOCKS) {
+            await fetch('/api/firestore/inventory', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(s),
+            });
+          }
+        }
+      }
+
+      // Fetch payments
+      const payRes = await fetch('/api/firestore/collection/payments').then((r) => r.json());
+      if (payRes.success && payRes.data && payRes.data.length > 0) {
+        this.payments = payRes.data;
+      }
+
+      // Fetch audit logs / timeline
+      const auditRes = await fetch('/api/firestore/collection/auditLogs').then((r) => r.json());
+      if (auditRes.success && auditRes.data && auditRes.data.length > 0) {
+        this.timeline = auditRes.data;
+      } else {
+        for (const t of SEED_TIMELINE) {
+          await fetch('/api/firestore/collection/auditLogs', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(t),
+          });
+        }
+      }
+
+      this.saveToStorage();
+    } catch (err) {
+      console.warn('[KFOSStore] Firestore sync failed, falling back to local memory:', err);
+    }
   }
 
   private loadFromStorage() {
@@ -307,6 +384,12 @@ class KFOSStore {
     };
     this.timeline.unshift(event);
     this.saveToStorage();
+
+    fetch('/api/firestore/collection/auditLogs', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(event),
+    }).catch((e) => console.warn('[Firestore] Sync audit log error:', e));
   }
 
   // Getters
@@ -379,6 +462,13 @@ class KFOSStore {
     this.customers.unshift(newCust);
     this.logTimeline('Order Created', `New Customer Added: ${cleanName}`, `Location: ${cleanPlace}`, newCust.id, cleanName);
     this.saveToStorage();
+
+    fetch('/api/firestore/customers', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(newCust),
+    }).catch((e) => console.warn('[Firestore] Sync customer error:', e));
+
     return newCust;
   }
 
@@ -515,6 +605,25 @@ class KFOSStore {
     );
 
     this.saveToStorage();
+
+    fetch('/api/firestore/orders', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(order),
+    }).catch((e) => console.warn('[Firestore] Sync order error:', e));
+
+    fetch('/api/firestore/inventory', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        quality,
+        currentStock5L: stockPool.currentStock5L,
+        type: 'DEDUCTION',
+        reason: `Order ${orderNumber}`,
+        orderId: order.id,
+      }),
+    }).catch((e) => console.warn('[Firestore] Sync inventory error:', e));
+
     return { success: true, order };
   }
 
@@ -674,27 +783,44 @@ class KFOSStore {
   }
 
   // Business Logic: Record Payment
-  public recordPayment(orderId: string, amount: number, method: PaymentRecord['paymentMethod'], notes?: string) {
-    const order = this.orders.find((o) => o.id === orderId);
-    if (!order) return { success: false, message: 'Order not found' };
+  public recordPayment(
+    orderIdOrCustomer: string,
+    customerIdOrAmount: string | number,
+    amountOrMethod: number | PaymentRecord['paymentMethod'],
+    methodOrNotes?: PaymentRecord['paymentMethod'] | string,
+    notesParam?: string
+  ) {
+    let orderId = orderIdOrCustomer;
+    let customerId = typeof customerIdOrAmount === 'string' ? customerIdOrAmount : '';
+    let amount = typeof customerIdOrAmount === 'number' ? customerIdOrAmount : (typeof amountOrMethod === 'number' ? amountOrMethod : 0);
+    let method: PaymentRecord['paymentMethod'] = (typeof amountOrMethod === 'string' ? amountOrMethod : (typeof methodOrNotes === 'string' ? methodOrNotes as PaymentRecord['paymentMethod'] : 'UPI'));
+    let notes = typeof methodOrNotes === 'string' && methodOrNotes !== 'UPI' && methodOrNotes !== 'Cash' && methodOrNotes !== 'Bank Transfer' ? methodOrNotes : notesParam;
 
-    order.paidAmount += amount;
-    if (order.paidAmount >= order.totalAmount) {
-      order.paymentStatus = 'Paid';
-    } else {
-      order.paymentStatus = 'Partial';
+    let order = this.orders.find((o) => o.id === orderId);
+    if (!order && customerId) {
+      order = this.orders.find((o) => o.customerId === customerId && o.paymentStatus !== 'Paid');
     }
 
-    const customer = this.getCustomerById(order.customerId);
+    if (order) {
+      order.paidAmount += amount;
+      if (order.paidAmount >= order.totalAmount) {
+        order.paymentStatus = 'Paid';
+      } else {
+        order.paymentStatus = 'Partial';
+      }
+    }
+
+    const custId = order ? order.customerId : (customerId || 'cust-1');
+    const customer = this.getCustomerById(custId);
     if (customer) {
       customer.outstandingBalance = Math.max(0, customer.outstandingBalance - amount);
     }
 
     const payment: PaymentRecord = {
       id: 'pay-' + Date.now(),
-      orderId: order.id,
-      customerId: order.customerId,
-      customerName: order.customerName,
+      orderId: order ? order.id : 'direct-credit-receipt',
+      customerId: custId,
+      customerName: customer ? customer.name : 'Field Customer',
       amount,
       paymentMethod: method,
       receivedAt: new Date().toISOString(),
@@ -706,13 +832,13 @@ class KFOSStore {
     this.logTimeline(
       'Payment Received',
       `Payment Received: ₹${amount.toLocaleString('en-IN')} (${method})`,
-      `Received from ${order.customerName} for Order ${order.orderNumber}. Balance remaining: ₹${Math.max(0, order.totalAmount - order.paidAmount).toLocaleString('en-IN')}.`,
-      order.customerId,
-      order.customerName
+      `Received from ${customer ? customer.name : 'Customer'}. Balance remaining: ₹${customer ? customer.outstandingBalance.toLocaleString('en-IN') : 0}.`,
+      custId,
+      customer ? customer.name : 'Customer'
     );
 
     this.saveToStorage();
-    return { success: true, message: `Payment of ₹${amount} recorded for ${order.customerName}` };
+    return { success: true, message: `Payment of ₹${amount} recorded successfully.` };
   }
 
   // Restock Liquid Stock Pool
