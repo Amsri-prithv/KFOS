@@ -64,38 +64,7 @@ export function resolveRoleFromPin(pin: string, pinsConfig: {
 export const handleLogin = async (req: Request, res: Response) => {
   const ip = getIpAddress(req);
   const now = Date.now();
-
   const attemptRef = getAttemptRef(ip);
-
-  // Read rate-limiting state atomically
-  let attempts = 0;
-  let lockedUntil = 0;
-
-  try {
-    const doc = await attemptRef.get();
-    if (doc.exists) {
-      const data = doc.data() || {};
-      lockedUntil = data.lockedUntil || 0;
-      attempts = data.attempts || 0;
-
-      // Reset attempts if lockout duration has passed
-      if (lockedUntil > 0 && now > lockedUntil) {
-        attempts = 0;
-        lockedUntil = 0;
-        await attemptRef.delete().catch(() => {});
-      }
-    }
-  } catch (err) {
-    console.warn('[Auth] Error reading rate limits, falling back to permissive mode:', err);
-  }
-
-  if (lockedUntil > 0 && now < lockedUntil) {
-    const timeLeft = Math.ceil((lockedUntil - now) / 1000);
-    return res.status(429).json({
-      success: false,
-      error: `Too many failed login attempts. Please try again in ${timeLeft} seconds.`,
-    });
-  }
 
   const { pin } = req.body;
 
@@ -103,49 +72,128 @@ export const handleLogin = async (req: Request, res: Response) => {
     return res.status(400).json({ success: false, error: 'Invalid login request' });
   }
 
-  let account: { id: string; name: string; role: Role } | null = null;
+  const isProduction = process.env.NODE_ENV === 'production';
+  const isTest = process.env.NODE_ENV === 'test' || process.env.VITEST === 'true';
+
+  let authResult: {
+    success: boolean;
+    status: number;
+    error?: string;
+    account?: { id: string; name: string; role: Role };
+  } | null = null;
+
   try {
-    account = resolveRoleFromPin(pin);
+    authResult = await firestoreDb.runTransaction(async (transaction: any) => {
+      const doc = await transaction.get(attemptRef);
+      let attempts = 0;
+      let lockedUntil = 0;
+
+      if (doc.exists) {
+        const data = doc.data() || {};
+        lockedUntil = data.lockedUntil || 0;
+        attempts = data.attempts || 0;
+
+        // Reset attempts if lockout duration has passed
+        if (lockedUntil > 0 && now > lockedUntil) {
+          attempts = 0;
+          lockedUntil = 0;
+          transaction.delete(attemptRef);
+        }
+      }
+
+      // Check if currently locked out
+      if (lockedUntil > 0 && now < lockedUntil) {
+        const timeLeft = Math.ceil((lockedUntil - now) / 1000);
+        return {
+          success: false,
+          status: 429,
+          error: `Too many failed login attempts. Please try again in ${timeLeft} seconds.`,
+        };
+      }
+
+      let account: { id: string; name: string; role: Role } | null = null;
+      try {
+        account = resolveRoleFromPin(pin);
+      } catch (err: any) {
+        console.error('[Auth] resolveRoleFromPin error:', err);
+        return {
+          success: false,
+          status: 401,
+          error: 'Authentication rejected due to configuration error.',
+        };
+      }
+
+      if (!account) {
+        const newAttempts = attempts + 1;
+        let newLockedUntil = 0;
+        if (newAttempts >= MAX_ATTEMPTS) {
+          newLockedUntil = now + LOCKOUT_DURATION;
+        }
+
+        transaction.set(attemptRef, {
+          attempts: newAttempts,
+          lockedUntil: newLockedUntil,
+          lastAttempt: now,
+        }, { merge: true });
+
+        if (newAttempts >= MAX_ATTEMPTS) {
+          return {
+            success: false,
+            status: 429,
+            error: 'Too many failed login attempts. Account locked for 1 minute.',
+          };
+        }
+
+        return {
+          success: false,
+          status: 401,
+          error: 'Invalid PIN or credentials.',
+        };
+      }
+
+      // Success! Clear attempt tracking in Firestore
+      transaction.delete(attemptRef);
+
+      return {
+        success: true,
+        status: 200,
+        account,
+      };
+    });
   } catch (err: any) {
-    console.error('[Auth] resolveRoleFromPin error:', err);
-    return res.status(401).json({ success: false, error: 'Authentication rejected due to configuration error.' });
-  }
+    console.error('[Auth] Error in transaction rate-limiting:', err);
 
-  if (!account) {
-    // Record failed attempt in Firestore
-    const newAttempts = attempts + 1;
-    let newLockedUntil = 0;
-    if (newAttempts >= MAX_ATTEMPTS) {
-      newLockedUntil = now + LOCKOUT_DURATION;
-    }
-
-    try {
-      await attemptRef.set({
-        attempts: newAttempts,
-        lockedUntil: newLockedUntil,
-        lastAttempt: now,
-      }, { merge: true });
-    } catch (err) {
-      console.warn('[Auth] Error writing rate limit:', err);
-    }
-
-    if (newAttempts >= MAX_ATTEMPTS) {
-      return res.status(429).json({
+    if (isProduction || isTest) {
+      return res.status(503).json({
         success: false,
-        error: 'Too many failed login attempts. Account locked for 1 minute.',
+        error: 'Service temporarily unavailable. Please try again later.',
       });
     }
 
-    return res.status(401).json({ success: false, error: 'Invalid PIN or credentials.' });
+    // Permissive fallback in local development only
+    try {
+      const account = resolveRoleFromPin(pin);
+      if (!account) {
+        return res.status(401).json({ success: false, error: 'Invalid PIN or credentials.' });
+      }
+      authResult = { success: true, status: 200, account };
+    } catch (resolveErr) {
+      return res.status(401).json({ success: false, error: 'Authentication rejected due to configuration error.' });
+    }
   }
 
-  // Success! Clear attempt tracking in Firestore
-  try {
-    await attemptRef.delete().catch(() => {});
-  } catch (err) {
-    console.warn('[Auth] Error clearing rate limit:', err);
+  if (!authResult) {
+    return res.status(503).json({
+      success: false,
+      error: 'Service temporarily unavailable. Please try again later.',
+    });
   }
 
+  if (!authResult.success) {
+    return res.status(authResult.status).json({ success: false, error: authResult.error });
+  }
+
+  const account = authResult.account!;
   const role: Role = account.role;
 
   const token = generateToken({
@@ -155,7 +203,6 @@ export const handleLogin = async (req: Request, res: Response) => {
   });
 
   // Set secure HttpOnly cookie for session token
-  const isProduction = process.env.NODE_ENV === 'production';
   res.cookie('kfos_session', token, {
     httpOnly: true,
     secure: isProduction,

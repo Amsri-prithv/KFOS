@@ -38,7 +38,7 @@ const app = express();
 const PORT = config.port;
 
 // Configure Express trust proxy for secure, normalized client IP tracking (req.ip) in Cloud Run
-app.set('trust proxy', true);
+app.set('trust proxy', 1);
 
 // Phase 4: Express Hardening - Dynamic JSON limits based on endpoint
 app.use((req, res, next) => {
