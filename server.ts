@@ -6,7 +6,7 @@ import { fileURLToPath } from 'url';
 
 import { config } from './server/config/env.js';
 import { handleNluParse } from './server/api/nlu.controller.js';
-import { handleTelegramMessage } from './server/api/telegram.controller.js';
+import { handleTelegramMessage, handleTelegramWebhook } from './server/api/telegram.controller.js';
 import { handleLogin, handleVerify } from './server/api/auth.controller.js';
 import { handleAgentExecution } from './server/api/agents.controller.js';
 import { dbService } from './server/services/db.service.js';
@@ -55,7 +55,8 @@ app.get('/api/db/health', async (req, res) => {
   res.json(health);
 });
 
-// Telegram Bot Webhook (Public webhook route)
+// Telegram Bot Webhook (Public webhook routes)
+app.post('/api/telegram/webhook', handleTelegramWebhook);
 app.post('/api/telegram/message', handleTelegramMessage);
 
 // Protected Firestore CRUD APIs with Authentication & RBAC

@@ -7,40 +7,34 @@ function hashPin(pin: string): string {
   return crypto.createHash('sha256').update(pin).digest('hex');
 }
 
-// Map of hashed PINs to default system accounts
+// Map of hashed PINs to default system accounts configured via environment or system defaults
 const VALID_PINS: Record<string, { id: string; name: string; role: Role }> = {
-  // ADMIN_PIN or default 061224 / 6124
-  [hashPin(process.env.ADMIN_PIN || '061224')]: {
+  [hashPin(process.env.FOUNDER_PIN || '061224')]: {
     id: 'usr_founder',
     name: 'Amsri Prithvi (Founder)',
     role: 'Founder',
   },
-  [hashPin('6124')]: {
-    id: 'usr_founder',
-    name: 'Amsri Prithvi (Founder)',
-    role: 'Founder',
-  },
-  [hashPin('1111')]: {
+  [hashPin(process.env.ADMIN_PIN || '1111')]: {
     id: 'usr_admin',
     name: 'KFOS System Admin',
     role: 'Admin',
   },
-  [hashPin('2222')]: {
+  [hashPin(process.env.SALES_PIN || '2222')]: {
     id: 'usr_sales',
     name: 'Field Sales Lead',
     role: 'Sales',
   },
-  [hashPin('3333')]: {
+  [hashPin(process.env.OPS_PIN || '3333')]: {
     id: 'usr_ops',
     name: 'Inventory Operations Lead',
     role: 'Operations',
   },
-  [hashPin('4444')]: {
+  [hashPin(process.env.FINANCE_PIN || '4444')]: {
     id: 'usr_finance',
     name: 'Finance & Accounts',
     role: 'Finance',
   },
-  [hashPin('5555')]: {
+  [hashPin(process.env.SUPPORT_PIN || '5555')]: {
     id: 'usr_support',
     name: 'Customer Support',
     role: 'Support',
@@ -48,7 +42,7 @@ const VALID_PINS: Record<string, { id: string; name: string; role: Role }> = {
 };
 
 export const handleLogin = async (req: Request, res: Response) => {
-  const { pin, requestedRole } = req.body;
+  const { pin } = req.body;
 
   if (!pin || typeof pin !== 'string') {
     return res.status(400).json({ success: false, error: 'PIN is required' });
@@ -61,7 +55,8 @@ export const handleLogin = async (req: Request, res: Response) => {
     return res.status(401).json({ success: false, error: 'Invalid PIN or credentials.' });
   }
 
-  const role: Role = requestedRole && account.role === 'Founder' ? requestedRole : account.role;
+  // Server dictates the role strictly based on authenticated account — never trust client input
+  const role: Role = account.role;
 
   const token = generateToken({
     id: account.id,

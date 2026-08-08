@@ -233,23 +233,7 @@ class KFOSStore {
   }
 
   private async ensureAuthToken(): Promise<string> {
-    let token = localStorage.getItem('kfos_token') || localStorage.getItem('token') || '';
-    if (!token) {
-      try {
-        const res = await fetch('/api/auth/login', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ pin: '061224' }),
-        });
-        const data = await res.json();
-        if (data.success && data.token) {
-          token = data.token;
-          localStorage.setItem('kfos_token', token);
-        }
-      } catch (e) {
-        console.warn('[KFOSStore] Auto-login token acquisition failed:', e);
-      }
-    }
+    const token = localStorage.getItem('kfos_token') || localStorage.getItem('token') || '';
     return token;
   }
 

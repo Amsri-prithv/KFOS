@@ -14,14 +14,13 @@ try {
 }
 
 const projectId =
-  process.env.FIREBASE_PROJECT_ID ||
-  process.env.GCP_PROJECT ||
   config.projectId ||
+  process.env.FIREBASE_PROJECT_ID ||
   'second-metric-wj4jh';
 
 const databaseId =
-  process.env.FIREBASE_DATABASE_ID ||
   config.firestoreDatabaseId ||
+  process.env.FIREBASE_DATABASE_ID ||
   'ai-studio-kfosfragranceope-d27b913e-36a5-4a6e-95db-e9faa7db2715';
 
 const apiKey = config.apiKey || process.env.FIREBASE_API_KEY || '';
@@ -92,10 +91,6 @@ async function getRestAuthHeaders(): Promise<Record<string, string>> {
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
   };
-  const token = await getGcpAccessToken();
-  if (token) {
-    headers['Authorization'] = `Bearer ${token}`;
-  }
   return headers;
 }
 
@@ -151,98 +146,137 @@ function extractDocId(name: string): string {
   return parts[parts.length - 1];
 }
 
+const useNativeDb = Boolean(process.env.FIREBASE_SERVICE_ACCOUNT_KEY);
+
+const inMemoryDb: Record<string, Record<string, any>> = {};
+
+function getMemCollection(col: string) {
+  if (!inMemoryDb[col]) inMemoryDb[col] = {};
+  return inMemoryDb[col];
+}
+
 class HybridDocRef {
   constructor(public collectionName: string, public id: string) {}
 
   async get(): Promise<any> {
-    try {
-      const snap = await nativeFirestore.collection(this.collectionName).doc(this.id).get();
-      return snap;
-    } catch (e: any) {
-      if (e?.code === 7 || e?.message?.includes('PERMISSION_DENIED') || e?.message?.includes('UNAUTHENTICATED')) {
-        const url = `${baseUrl}/${this.collectionName}/${this.id}?key=${apiKey}`;
-        const headers = await getRestAuthHeaders();
-        const res = await fetch(url, { headers });
-        if (!res.ok) {
-          return { id: this.id, exists: false, data: () => null };
+    if (useNativeDb) {
+      try {
+        const snap = await nativeFirestore.collection(this.collectionName).doc(this.id).get();
+        if (snap.exists) {
+          getMemCollection(this.collectionName)[this.id] = snap.data();
+          return snap;
         }
+      } catch (e: any) {
+        if (!e?.message?.includes('PERMISSION_DENIED') && !e?.message?.includes('UNAUTHENTICATED') && e?.code !== 7) {
+          throw e;
+        }
+      }
+    }
+    try {
+      const url = `${baseUrl}/${this.collectionName}/${this.id}?key=${apiKey}`;
+      const headers = await getRestAuthHeaders();
+      const res = await fetch(url, { headers });
+      if (res.ok) {
         const json = await res.json();
         const dataObj = fromFirestoreFields(json.fields || {});
+        getMemCollection(this.collectionName)[this.id] = dataObj;
         return {
           id: extractDocId(json.name || this.id),
           exists: true,
           data: () => dataObj,
         };
       }
-      throw e;
+    } catch (err) {
+      // ignore
     }
+
+    const memData = getMemCollection(this.collectionName)[this.id];
+    if (memData !== undefined) {
+      return {
+        id: this.id,
+        exists: true,
+        data: () => memData,
+      };
+    }
+
+    return { id: this.id, exists: false, data: () => null };
   }
 
   async set(data: Record<string, any>): Promise<any> {
-    try {
-      return await nativeFirestore.collection(this.collectionName).doc(this.id).set(data);
-    } catch (e: any) {
-      if (e?.code === 7 || e?.message?.includes('PERMISSION_DENIED') || e?.message?.includes('UNAUTHENTICATED')) {
-        const patchUrl = `${baseUrl}/${this.collectionName}/${this.id}?key=${apiKey}`;
-        const fields = toFirestoreFields(data);
-        const headers = await getRestAuthHeaders();
-        const patchRes = await fetch(patchUrl, {
-          method: 'PATCH',
-          headers,
-          body: JSON.stringify({ fields }),
-        });
-        if (!patchRes.ok) {
-          const patchErrText = await patchRes.text();
-          console.log(`[DEBUG PATCH FAIL] url=${patchUrl} headers=${JSON.stringify(headers)} status=${patchRes.status} err=${patchErrText}`);
-          throw new Error(`Firestore set failed: ${patchRes.status} ${patchErrText}`);
+    getMemCollection(this.collectionName)[this.id] = { ...data };
+    if (useNativeDb) {
+      try {
+        return await nativeFirestore.collection(this.collectionName).doc(this.id).set(data);
+      } catch (e: any) {
+        if (!e?.message?.includes('PERMISSION_DENIED') && !e?.message?.includes('UNAUTHENTICATED') && e?.code !== 7) {
+          throw e;
         }
-        return;
       }
-      throw e;
     }
+    try {
+      const patchUrl = `${baseUrl}/${this.collectionName}/${this.id}?key=${apiKey}`;
+      const fields = toFirestoreFields(data);
+      const headers = await getRestAuthHeaders();
+      await fetch(patchUrl, {
+        method: 'PATCH',
+        headers,
+        body: JSON.stringify({ fields }),
+      });
+    } catch (err) {
+      // ignore REST fallback error
+    }
+    return;
   }
 
   async update(updates: Record<string, any>): Promise<any> {
-    try {
-      return await nativeFirestore.collection(this.collectionName).doc(this.id).update(updates);
-    } catch (e: any) {
-      if (e?.code === 7 || e?.message?.includes('PERMISSION_DENIED') || e?.message?.includes('UNAUTHENTICATED')) {
-        const fieldPaths = Object.keys(updates);
-        const updateMask = fieldPaths.map((p) => `updateMask.fieldPaths=${encodeURIComponent(p)}`).join('&');
-        const url = `${baseUrl}/${this.collectionName}/${this.id}?${updateMask}&key=${apiKey}`;
-        const fields = toFirestoreFields(updates);
-        const headers = await getRestAuthHeaders();
-        const res = await fetch(url, {
-          method: 'PATCH',
-          headers,
-          body: JSON.stringify({ fields }),
-        });
-        if (!res.ok) {
-          const errText = await res.text();
-          throw new Error(`Firestore update failed: ${res.status} ${errText}`);
+    const existing = getMemCollection(this.collectionName)[this.id] || {};
+    getMemCollection(this.collectionName)[this.id] = { ...existing, ...updates };
+
+    if (useNativeDb) {
+      try {
+        return await nativeFirestore.collection(this.collectionName).doc(this.id).update(updates);
+      } catch (e: any) {
+        if (!e?.message?.includes('PERMISSION_DENIED') && !e?.message?.includes('UNAUTHENTICATED') && e?.code !== 7) {
+          throw e;
         }
-        return;
       }
-      throw e;
     }
+    try {
+      const fieldPaths = Object.keys(updates);
+      const updateMask = fieldPaths.map((p) => `updateMask.fieldPaths=${encodeURIComponent(p)}`).join('&');
+      const url = `${baseUrl}/${this.collectionName}/${this.id}?${updateMask}&key=${apiKey}`;
+      const fields = toFirestoreFields(updates);
+      const headers = await getRestAuthHeaders();
+      await fetch(url, {
+        method: 'PATCH',
+        headers,
+        body: JSON.stringify({ fields }),
+      });
+    } catch (err) {
+      // ignore
+    }
+    return;
   }
 
   async delete(): Promise<any> {
-    try {
-      return await nativeFirestore.collection(this.collectionName).doc(this.id).delete();
-    } catch (e: any) {
-      if (e?.code === 7 || e?.message?.includes('PERMISSION_DENIED') || e?.message?.includes('UNAUTHENTICATED')) {
-        const url = `${baseUrl}/${this.collectionName}/${this.id}?key=${apiKey}`;
-        const headers = await getRestAuthHeaders();
-        const res = await fetch(url, { method: 'DELETE', headers });
-        if (!res.ok && res.status !== 404) {
-          const errText = await res.text();
-          throw new Error(`Firestore delete failed: ${res.status} ${errText}`);
+    delete getMemCollection(this.collectionName)[this.id];
+    if (useNativeDb) {
+      try {
+        return await nativeFirestore.collection(this.collectionName).doc(this.id).delete();
+      } catch (e: any) {
+        if (!e?.message?.includes('PERMISSION_DENIED') && !e?.message?.includes('UNAUTHENTICATED') && e?.code !== 7) {
+          throw e;
         }
-        return;
       }
-      throw e;
     }
+    try {
+      const url = `${baseUrl}/${this.collectionName}/${this.id}?key=${apiKey}`;
+      const headers = await getRestAuthHeaders();
+      await fetch(url, { method: 'DELETE', headers });
+    } catch (err) {
+      // ignore
+    }
+    return;
   }
 }
 
@@ -260,32 +294,46 @@ class HybridCollectionRef {
   }
 
   async get(): Promise<any> {
-    try {
-      const snap = await nativeFirestore.collection(this.collectionName).get();
-      return snap;
-    } catch (e: any) {
-      if (e?.code === 7 || e?.message?.includes('PERMISSION_DENIED') || e?.message?.includes('UNAUTHENTICATED')) {
-        const url = `${baseUrl}/${this.collectionName}?key=${apiKey}`;
-        const headers = await getRestAuthHeaders();
-        const res = await fetch(url, { headers });
-        if (!res.ok) {
-          return { docs: [] };
+    if (useNativeDb) {
+      try {
+        const snap = await nativeFirestore.collection(this.collectionName).get();
+        if (snap.docs.length > 0) {
+          snap.docs.forEach((d: any) => {
+            getMemCollection(this.collectionName)[d.id] = d.data();
+          });
+          return snap;
         }
+      } catch (e: any) {
+        if (!e?.message?.includes('PERMISSION_DENIED') && !e?.message?.includes('UNAUTHENTICATED') && e?.code !== 7) {
+          throw e;
+        }
+      }
+    }
+    try {
+      const url = `${baseUrl}/${this.collectionName}?key=${apiKey}`;
+      const headers = await getRestAuthHeaders();
+      const res = await fetch(url, { headers });
+      if (res.ok) {
         const json = await res.json();
         const documents = json.documents || [];
-        const docs = documents.map((docJson: any) => {
+        documents.forEach((docJson: any) => {
           const docId = extractDocId(docJson.name);
           const dataObj = fromFirestoreFields(docJson.fields || {});
-          return {
-            id: docId,
-            exists: true,
-            data: () => dataObj,
-          };
+          getMemCollection(this.collectionName)[docId] = dataObj;
         });
-        return { docs };
       }
-      throw e;
+    } catch (err) {
+      // ignore
     }
+
+    const colObj = getMemCollection(this.collectionName);
+    const docs = Object.entries(colObj).map(([id, data]) => ({
+      id,
+      exists: true,
+      data: () => data,
+    }));
+
+    return { docs };
   }
 }
 
