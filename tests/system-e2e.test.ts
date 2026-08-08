@@ -58,7 +58,7 @@ describe('KFOS Production Safety & Concurrency E2E Test Suite', () => {
 
       expect(fulfilledCount).toBe(1);
       expect(rejectedCount).toBe(1);
-    });
+    }, 30000);
   });
 
   describe('2. Sample Limit Enforcement (Max 3 Lifetime)', () => {

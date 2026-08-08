@@ -136,7 +136,7 @@ export async function runTelegramTestSuite() {
       message_id: 7,
       chat: { id: testChatId },
       from: { first_name: 'Test Rep' },
-      text: 'Arun ku 99999 Standard cans order',
+      text: 'Ramesh ku 99999 Standard cans order',
     },
   });
   console.log('Excess Stock Reply:\n' + excessReq.reply);

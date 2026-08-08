@@ -108,11 +108,8 @@ export const ordersRepository = {
 
         // Deduct inventory stock
         const newStock = currentStock - qty;
-        tx.set(stockRef, prepareDataForUpdate({
-          id: quality,
-          quality,
+        tx.update(stockRef, prepareDataForUpdate({
           currentStock5L: newStock,
-          updatedAt: new Date().toISOString(),
         }));
 
         // Log inventory transaction with delta quantity
@@ -169,7 +166,7 @@ export const ordersRepository = {
         totalSpent: (customerData.totalSpent || 0) + orderTotalAmount,
         outstandingBalance: (customerData.outstandingBalance || 0) + unpaidBalance,
       });
-      tx.set(custRef, updatedCustomer);
+      tx.update(custRef, updatedCustomer);
 
       // Log audit event
       const auditId = `evt-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
