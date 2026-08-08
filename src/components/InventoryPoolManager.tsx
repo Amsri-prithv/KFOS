@@ -24,11 +24,11 @@ export const InventoryPoolManager: React.FC = () => {
     return kfosStore.subscribe(refresh);
   }, []);
 
-  const handleRestock = (e: React.FormEvent) => {
+  const handleRestock = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedQualityForRestock || addCans <= 0) return;
 
-    const res = kfosStore.restockLiquidPool(selectedQualityForRestock, addCans);
+    const res = await kfosStore.restockLiquidPool(selectedQualityForRestock, addCans);
     alert(res.message);
     setSelectedQualityForRestock(null);
     setAddCans(50);

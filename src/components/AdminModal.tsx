@@ -23,11 +23,11 @@ export const AdminModal: React.FC<AdminModalProps> = ({
       const res = await fetch('/api/auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
         body: JSON.stringify({ pin: pinInput.trim() }),
       });
       const data = await res.json();
-      if (data.success && data.token) {
-        localStorage.setItem('kfos_token', data.token);
+      if (data.success) {
         if (data.user?.role) {
           localStorage.setItem('kfos_role', data.user.role);
         }
@@ -75,7 +75,15 @@ export const AdminModal: React.FC<AdminModalProps> = ({
             </div>
 
             <button
-              onClick={onLock}
+              onClick={async () => {
+                try {
+                  await fetch('/api/auth/logout', { method: 'POST', credentials: 'include' });
+                } catch (e) {
+                  console.warn('Logout error:', e);
+                }
+                localStorage.removeItem('kfos_role');
+                onLock();
+              }}
               className="w-full py-2.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 font-bold text-xs rounded-xl transition-all"
             >
               Lock Admin Session

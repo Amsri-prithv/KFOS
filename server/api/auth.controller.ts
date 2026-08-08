@@ -221,7 +221,6 @@ export const handleLogin = async (req: Request, res: Response) => {
 
   return res.json({
     success: true,
-    token,
     user: {
       id: account.id,
       name: account.name,

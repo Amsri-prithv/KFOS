@@ -113,7 +113,7 @@ export const TelegramBotSimulator: React.FC<TelegramBotSimulatorProps> = ({ onCl
       };
       setMessages((prev) => [...prev, userMsg]);
 
-      const response = await fetch('/api/nlu/parse', {
+      const response = await kfosStore.fetchWithAuth('/api/nlu/parse', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(bodyPayload),

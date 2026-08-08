@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Settings, Shield, Server, Key, Database, RefreshCw, CheckCircle2, AlertCircle } from 'lucide-react';
 import { UserRole } from '../types/kfos';
+import { kfosStore } from '../services/kfosStore';
 
 export const SystemSettings: React.FC = () => {
   const [serverStatus, setServerStatus] = useState<'checking' | 'online' | 'offline'>('checking');
@@ -10,7 +11,7 @@ export const SystemSettings: React.FC = () => {
   const checkHealth = async () => {
     setServerStatus('checking');
     try {
-      const res = await fetch('/api/health');
+      const res = await kfosStore.fetchWithAuth('/api/health');
       if (res.ok) {
         const data = await res.json();
         setServerInfo(data);
@@ -19,7 +20,7 @@ export const SystemSettings: React.FC = () => {
         setServerStatus('offline');
       }
 
-      const dbRes = await fetch('/api/db/health');
+      const dbRes = await kfosStore.fetchWithAuth('/api/db/health');
       if (dbRes.ok) {
         const dbData = await dbRes.json();
         setDbHealth(dbData);

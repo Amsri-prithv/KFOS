@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Bot, Play, Sparkles, ShieldCheck, Terminal, Cpu, CheckCircle2, AlertTriangle } from 'lucide-react';
 import { AIAgent } from '../types/kfos';
+import { kfosStore } from '../services/kfosStore';
 
 export const AIAgentsHub: React.FC = () => {
   const [agents, setAgents] = useState<AIAgent[]>([
@@ -51,7 +52,7 @@ export const AIAgentsHub: React.FC = () => {
     setExecutionOutput(null);
 
     try {
-      const response = await fetch('/api/agents/execute', {
+      const response = await kfosStore.fetchWithAuth('/api/agents/execute', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

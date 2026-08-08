@@ -323,6 +323,13 @@ export async function createGenericDoc(req: Request, res: Response) {
   }
 }
 
+const PATCH_ALLOWED_FIELDS: Record<string, string[]> = {
+  leads: ['status'],
+  supportTickets: ['status'],
+  tasks: ['status'],
+  samples: ['followUpStatus', 'followUpNotes'],
+};
+
 export async function updateGenericDoc(req: Request, res: Response) {
   try {
     const { name, id } = req.params;
@@ -344,8 +351,9 @@ export async function updateGenericDoc(req: Request, res: Response) {
       return res.status(403).json({ success: false, error: `Access Denied: Role ${userRole} is not authorized to update collection ${name}` });
     }
 
-    if (READ_ONLY_COLLECTIONS.includes(name)) {
-      return res.status(403).json({ success: false, error: `Updates to collection ${name} are prohibited via generic API.` });
+    const allowedFields = PATCH_ALLOWED_FIELDS[name];
+    if (!allowedFields) {
+      return res.status(403).json({ success: false, error: `Updates to collection ${name} are prohibited.` });
     }
 
     // Verify document existence first to respect resource authorization
@@ -354,13 +362,17 @@ export async function updateGenericDoc(req: Request, res: Response) {
       return res.status(404).json({ success: false, error: `Document ${id} not found in collection ${name}` });
     }
 
-    // Prevent mass assignment or privilege escalation. Sanitise input data:
-    const data = { ...req.body };
-    delete data.id; // ID is immutable
-    delete data.createdAt; // createdAt is immutable
-    delete data._systemSecret;
-    delete data.isAdmin;
-    delete data.role;
+    // Filter req.body to only allowed fields
+    const data: Record<string, any> = {};
+    for (const key of Object.keys(req.body)) {
+      if (allowedFields.includes(key)) {
+        data[key] = req.body[key];
+      }
+    }
+
+    if (Object.keys(data).length === 0) {
+      return res.status(400).json({ success: false, error: 'No writable fields provided or permitted' });
+    }
 
     const doc = await genericRepository.update(name as CollectionName, id, data);
     res.json({ success: true, collection: name, data: doc });

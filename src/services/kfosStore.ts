@@ -50,106 +50,131 @@ class KFOSStore {
     this.syncWithFirestore();
   }
 
-  private async ensureAuthToken(): Promise<string> {
-    const token = localStorage.getItem('kfos_token') || localStorage.getItem('token') || '';
-    return token;
+  private getCookie(name: string): string {
+    if (typeof document === 'undefined') return '';
+    const value = `; ${document.cookie}`;
+    const parts = value.split(`; ${name}=`);
+    if (parts.length === 2) return parts.pop()?.split(';').shift() || '';
+    return '';
   }
 
-  private async getAuthHeaders(): Promise<Record<string, string>> {
-    const token = await this.ensureAuthToken();
+  private async getAuthHeaders(method: string = 'GET'): Promise<Record<string, string>> {
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
     };
-    if (token) {
-      headers['Authorization'] = `Bearer ${token}`;
+    if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(method.toUpperCase())) {
+      const csrfToken = this.getCookie('XSRF-TOKEN');
+      if (csrfToken) {
+        headers['X-XSRF-TOKEN'] = csrfToken;
+        headers['X-CSRF-TOKEN'] = csrfToken;
+      }
     }
     return headers;
   }
 
+  public async fetchWithAuth(url: string, init: RequestInit = {}): Promise<Response> {
+    const method = init.method || 'GET';
+    const headers = await this.getAuthHeaders(method);
+    const finalHeaders = {
+      ...headers,
+      ...(init.headers as Record<string, string>),
+    };
+    const res = await fetch(url, {
+      ...init,
+      credentials: 'include',
+      headers: finalHeaders,
+    });
+    if (res.status === 401) {
+      localStorage.removeItem('kfos_role');
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('kfos-unauthorized'));
+      }
+    }
+    return res;
+  }
+
   public async syncWithFirestore() {
     try {
-      const headers = await this.getAuthHeaders();
-
       // Fetch customers from Firestore
-      const custRes = await fetch('/api/firestore/customers', { headers }).then((r) => r.json()).catch(() => ({}));
+      const custRes = await this.fetchWithAuth('/api/firestore/customers').then((r) => r.json()).catch(() => ({}));
       if (custRes.success && Array.isArray(custRes.data)) {
         this.customers = custRes.data;
       }
 
       // Fetch orders from Firestore
-      const ordRes = await fetch('/api/firestore/orders', { headers }).then((r) => r.json()).catch(() => ({}));
+      const ordRes = await this.fetchWithAuth('/api/firestore/orders').then((r) => r.json()).catch(() => ({}));
       if (ordRes.success && Array.isArray(ordRes.data)) {
         this.orders = ordRes.data;
       }
 
       // Fetch inventory from Firestore
-      const invRes = await fetch('/api/firestore/inventory', { headers }).then((r) => r.json()).catch(() => ({}));
+      const invRes = await this.fetchWithAuth('/api/firestore/inventory').then((r) => r.json()).catch(() => ({}));
       if (invRes.success && Array.isArray(invRes.data) && invRes.data.length > 0) {
         this.stocks = invRes.data;
       }
 
       // Fetch expenses from Firestore
-      const expRes = await fetch('/api/firestore/expenses', { headers }).then((r) => r.json()).catch(() => ({}));
+      const expRes = await this.fetchWithAuth('/api/firestore/expenses').then((r) => r.json()).catch(() => ({}));
       if (expRes.success && Array.isArray(expRes.data)) {
         this.expenses = expRes.data;
       }
 
       // Fetch payments
-      const payRes = await fetch('/api/firestore/collection/payments', { headers }).then((r) => r.json()).catch(() => ({}));
+      const payRes = await this.fetchWithAuth('/api/firestore/collection/payments').then((r) => r.json()).catch(() => ({}));
       if (payRes.success && Array.isArray(payRes.data)) {
         this.payments = payRes.data;
       }
 
       // Fetch leads
-      const leadRes = await fetch('/api/firestore/collection/leads', { headers }).then((r) => r.json()).catch(() => ({}));
+      const leadRes = await this.fetchWithAuth('/api/firestore/collection/leads').then((r) => r.json()).catch(() => ({}));
       if (leadRes.success && Array.isArray(leadRes.data)) {
         this.leads = leadRes.data;
       }
 
       // Fetch campaigns
-      const campRes = await fetch('/api/firestore/collection/campaigns', { headers }).then((r) => r.json()).catch(() => ({}));
+      const campRes = await this.fetchWithAuth('/api/firestore/collection/campaigns').then((r) => r.json()).catch(() => ({}));
       if (campRes.success && Array.isArray(campRes.data)) {
         this.campaigns = campRes.data;
       }
 
       // Fetch support tickets
-      const ticketRes = await fetch('/api/firestore/collection/supportTickets', { headers }).then((r) => r.json()).catch(() => ({}));
+      const ticketRes = await this.fetchWithAuth('/api/firestore/collection/supportTickets').then((r) => r.json()).catch(() => ({}));
       if (ticketRes.success && Array.isArray(ticketRes.data)) {
         this.supportTickets = ticketRes.data;
       }
 
       // Fetch tasks
-      const taskRes = await fetch('/api/firestore/collection/tasks', { headers }).then((r) => r.json()).catch(() => ({}));
+      const taskRes = await this.fetchWithAuth('/api/firestore/collection/tasks').then((r) => r.json()).catch(() => ({}));
       if (taskRes.success && Array.isArray(taskRes.data)) {
         this.tasks = taskRes.data;
       }
 
       // Fetch notifications
-      const notifRes = await fetch('/api/firestore/collection/notifications', { headers }).then((r) => r.json()).catch(() => ({}));
+      const notifRes = await this.fetchWithAuth('/api/firestore/collection/notifications').then((r) => r.json()).catch(() => ({}));
       if (notifRes.success && Array.isArray(notifRes.data)) {
         this.notifications = notifRes.data;
       }
 
       // Fetch telegram pending actions / updates
-      const tgRes = await fetch('/api/firestore/collection/telegramProcessedUpdates', { headers }).then((r) => r.json()).catch(() => ({}));
+      const tgRes = await this.fetchWithAuth('/api/firestore/collection/telegramProcessedUpdates').then((r) => r.json()).catch(() => ({}));
       if (tgRes.success && Array.isArray(tgRes.data)) {
         this.telegramActivities = tgRes.data;
       }
 
       // Fetch audit logs / timeline
-      const auditRes = await fetch('/api/firestore/collection/auditLogs', { headers }).then((r) => r.json()).catch(() => ({}));
+      const auditRes = await this.fetchWithAuth('/api/firestore/collection/auditLogs').then((r) => r.json()).catch(() => ({}));
       if (auditRes.success && Array.isArray(auditRes.data)) {
         this.timeline = auditRes.data;
       }
 
       // Fetch returns / reversed orders
-      const retRes = await fetch('/api/firestore/collection/returns', { headers }).then((r) => r.json()).catch(() => ({}));
+      const retRes = await this.fetchWithAuth('/api/firestore/collection/returns').then((r) => r.json()).catch(() => ({}));
       if (retRes.success && Array.isArray(retRes.data)) {
         this.returns = retRes.data;
       }
 
       // Fetch samples
-      const sampRes = await fetch('/api/firestore/collection/samples', { headers }).then((r) => r.json()).catch(() => ({}));
+      const sampRes = await this.fetchWithAuth('/api/firestore/collection/samples').then((r) => r.json()).catch(() => ({}));
       if (sampRes.success && Array.isArray(sampRes.data)) {
         this.samples = sampRes.data;
       }
@@ -808,39 +833,42 @@ class KFOSStore {
     }
   }
 
-  // Restock Liquid Stock Pool
-  public restockLiquidPool(quality: QualityGrade, addedCans: number): { success: boolean; message: string } {
+  // Restock Liquid Stock Pool (Server-Authoritative)
+  public async restockLiquidPool(quality: QualityGrade, addedCans: number): Promise<{ success: boolean; message: string }> {
     const pool = this.stocks.find((s) => s.quality === quality);
     if (!pool) return { success: false, message: 'Invalid stock pool' };
 
-    pool.currentStock5L += addedCans;
-    pool.lastRestockedAt = new Date().toISOString();
-
-    this.logTimeline(
-      'Stock Restocked',
-      `Restocked ${addedCans} Cans to ${quality} Pool`,
-      `Shared Liquid Pool (${quality}) now has ${pool.currentStock5L} Cans total.`,
-      undefined,
-      undefined,
-      { quality, addedCans, total: pool.currentStock5L }
-    );
-
-    this.notify();
-
-    this.getAuthHeaders().then((headers) => {
-      fetch('/api/firestore/inventory', {
+    try {
+      const res = await this.fetchWithAuth('/api/firestore/inventory', {
         method: 'POST',
-        headers,
         body: JSON.stringify({
           quality,
           currentStock5L: addedCans,
           type: 'RESTOCK',
           reason: `Restocked ${addedCans} Cans`,
         }),
-      }).catch((e) => console.warn('[Firestore] Sync inventory error:', e));
-    });
+      }).then((r) => r.json());
 
-    return { success: true, message: `Added ${addedCans} Cans to ${quality} Pool. New total: ${pool.currentStock5L} Cans.` };
+      if (res.success) {
+        pool.currentStock5L += addedCans;
+        pool.lastRestockedAt = new Date().toISOString();
+
+        this.logTimeline(
+          'Stock Restocked',
+          `Restocked ${addedCans} Cans to ${quality} Pool`,
+          `Shared Liquid Pool (${quality}) now has ${pool.currentStock5L} Cans total.`,
+          undefined,
+          undefined,
+          { quality, addedCans, total: pool.currentStock5L }
+        );
+
+        this.notify();
+        return { success: true, message: `Added ${addedCans} Cans to ${quality} Pool. New total: ${pool.currentStock5L} Cans.` };
+      }
+      return { success: false, message: res.error || 'Failed to sync inventory restock' };
+    } catch (e: any) {
+      return { success: false, message: e.message || 'Restock connection error' };
+    }
   }
 
   // Soft Delete with Undo Recovery Support

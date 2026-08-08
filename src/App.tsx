@@ -69,11 +69,42 @@ export default function App() {
   const [orders, setOrders] = useState(kfosStore.getOrders());
 
   useEffect(() => {
+    // 1. Verify active session on start
+    kfosStore.fetchWithAuth('/api/auth/verify')
+      .then((res) => res.json())
+      .then((data) => {
+        if (data && data.authenticated) {
+          setIsAdminUnlocked(true);
+          if (data.user?.role) {
+            localStorage.setItem('kfos_role', data.user.role);
+          }
+        } else {
+          setIsAdminUnlocked(false);
+          localStorage.removeItem('kfos_role');
+        }
+      })
+      .catch(() => {
+        setIsAdminUnlocked(false);
+        localStorage.removeItem('kfos_role');
+      });
+
+    // 2. Subscribe to kfosStore changes
     const unsubscribe = kfosStore.subscribe(() => {
       setCustomers(kfosStore.getCustomers());
       setOrders(kfosStore.getOrders());
     });
-    return () => unsubscribe();
+
+    // 3. Listen for global unauthorized events
+    const handleUnauthorized = () => {
+      setIsAdminUnlocked(false);
+      localStorage.removeItem('kfos_role');
+    };
+    window.addEventListener('kfos-unauthorized', handleUnauthorized);
+
+    return () => {
+      unsubscribe();
+      window.removeEventListener('kfos-unauthorized', handleUnauthorized);
+    };
   }, []);
 
   // Modals state
