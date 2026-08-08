@@ -309,18 +309,6 @@ export default function App() {
           </button>
 
           <button
-            onClick={() => setActiveTab('finance')}
-            className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all whitespace-nowrap ${
-              activeTab === 'finance'
-                ? 'bg-amber-500/10 text-amber-400 border border-amber-500/30 shadow-sm'
-                : 'text-neutral-400 hover:text-neutral-200 hover:bg-neutral-800/50'
-            }`}
-          >
-            <IndianRupee className="w-3.5 h-3.5" />
-            <span>Finance & Ledger</span>
-          </button>
-
-          <button
             onClick={() => setActiveTab('agents')}
             className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all whitespace-nowrap ${
               activeTab === 'agents'
