@@ -1,4 +1,5 @@
 import dotenv from 'dotenv';
+import crypto from 'crypto';
 dotenv.config();
 
 const isProduction = process.env.NODE_ENV === 'production';
@@ -22,6 +23,15 @@ if (isProduction) {
     // Fail fast in production environment
     throw new Error(`CRITICAL: Missing production secrets: ${missingSecrets.join(', ')}`);
   }
+
+  // Reject default or weak JWT secrets in production
+  const jwtSecret = process.env.JWT_SECRET || '';
+  if (jwtSecret === 'kfos_jwt_secret_key_dev_only') {
+    throw new Error('CRITICAL CONFIGURATION ERROR: JWT_SECRET cannot be set to the default development secret in production.');
+  }
+  if (jwtSecret.length < 32) {
+    throw new Error('CRITICAL CONFIGURATION ERROR: JWT_SECRET must be at least 32 characters long in production.');
+  }
 }
 
 export const config = {
@@ -40,4 +50,42 @@ export const config = {
   appUrl: process.env.APP_URL || 'http://localhost:3000',
   isProduction,
 };
+
+// Cryptographically secure validation function for PIN collisions
+export function verifyNoPinCollisions(pinsObj: {
+  founderPin: string;
+  adminPin: string;
+  salesPin: string;
+  opsPin: string;
+  financePin: string;
+  supportPin: string;
+}) {
+  const pins = [
+    { name: 'FOUNDER_PIN', val: pinsObj.founderPin },
+    { name: 'ADMIN_PIN', val: pinsObj.adminPin },
+    { name: 'SALES_PIN', val: pinsObj.salesPin },
+    { name: 'OPS_PIN', val: pinsObj.opsPin },
+    { name: 'FINANCE_PIN', val: pinsObj.financePin },
+    { name: 'SUPPORT_PIN', val: pinsObj.supportPin },
+  ];
+
+  // Map to SHA-256 hash buffers for timing-safe comparison
+  const hashedPins = pins.map((p) => ({
+    name: p.name,
+    hash: crypto.createHash('sha256').update(p.val).digest(),
+  }));
+
+  for (let i = 0; i < hashedPins.length; i++) {
+    for (let j = i + 1; j < hashedPins.length; j++) {
+      if (crypto.timingSafeEqual(hashedPins[i].hash, hashedPins[j].hash)) {
+        throw new Error(`CRITICAL CONFIGURATION ERROR: PIN collision detected between role PINs (${hashedPins[i].name} and ${hashedPins[j].name}). Duplicate PINs are prohibited.`);
+      }
+    }
+  }
+}
+
+// Perform PIN collision check immediately on startup in production
+if (isProduction) {
+  verifyNoPinCollisions(config);
+}
 

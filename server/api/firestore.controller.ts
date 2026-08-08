@@ -6,6 +6,7 @@ import { productsRepository } from '../repositories/products.repository.js';
 import { expensesRepository } from '../repositories/expenses.repository.js';
 import { genericRepository } from '../repositories/generic.repository.js';
 import { CollectionName } from '../firebase/firestore.js';
+import { COLLECTION_PERMISSIONS } from '../config/permissions.js';
 
 function sanitizeErrorMessage(err: any, defaultMsg: string): string {
   if (!err) return defaultMsg;
@@ -40,6 +41,20 @@ export async function getCustomers(req: Request, res: Response) {
 
 export async function createCustomer(req: Request, res: Response) {
   try {
+    const { name, phone, place } = req.body;
+    if (!name || typeof name !== 'string' || name.trim().length === 0) {
+      return res.status(400).json({ success: false, error: 'Customer name is required' });
+    }
+    if (name.length > 100) {
+      return res.status(400).json({ success: false, error: 'Customer name is too long' });
+    }
+    if (phone && (typeof phone !== 'string' || phone.length > 20)) {
+      return res.status(400).json({ success: false, error: 'Invalid customer phone number' });
+    }
+    if (place && (typeof place !== 'string' || place.length > 100)) {
+      return res.status(400).json({ success: false, error: 'Invalid customer place name' });
+    }
+
     const customer = await customersRepository.create(req.body);
     res.json({ success: true, data: customer });
   } catch (err: any) {
@@ -60,6 +75,41 @@ export async function getOrders(req: Request, res: Response) {
 
 export async function createOrder(req: Request, res: Response) {
   try {
+    const { customerId, items, paidAmount } = req.body;
+    if (!customerId || typeof customerId !== 'string') {
+      return res.status(400).json({ success: false, error: 'Customer ID is required' });
+    }
+    if (!items || !Array.isArray(items) || items.length === 0) {
+      return res.status(400).json({ success: false, error: 'Order must contain at least one product item' });
+    }
+    if (items.length > 50) {
+      return res.status(400).json({ success: false, error: 'Maximum order items exceeded (limit 50)' });
+    }
+
+    for (const item of items) {
+      if (!item.productVariant || typeof item.productVariant !== 'string') {
+        return res.status(400).json({ success: false, error: 'Product variant is required for all items' });
+      }
+      if (!item.quality || typeof item.quality !== 'string') {
+        return res.status(400).json({ success: false, error: 'Quality grade is required for all items' });
+      }
+      const qty = Number(item.quantity);
+      if (typeof item.quantity !== 'number' || Number.isNaN(qty) || !Number.isFinite(qty) || !Number.isInteger(qty) || qty <= 0 || qty > 10000) {
+        return res.status(400).json({ success: false, error: 'Quantity must be a positive integer below 10,000' });
+      }
+      const disc = Number(item.discountPerUnit || 0);
+      if (typeof item.discountPerUnit === 'number' && (Number.isNaN(disc) || !Number.isFinite(disc) || disc < 0 || disc > 100000)) {
+        return res.status(400).json({ success: false, error: 'Discount must be a non-negative finite number' });
+      }
+    }
+
+    if (paidAmount !== undefined) {
+      const paid = Number(paidAmount);
+      if (typeof paidAmount !== 'number' || Number.isNaN(paid) || !Number.isFinite(paid) || paid < 0) {
+        return res.status(400).json({ success: false, error: 'Paid amount must be a non-negative finite number' });
+      }
+    }
+
     const order = await ordersRepository.createOrderAtomic(req.body);
     res.json({ success: true, data: order });
   } catch (err: any) {
@@ -81,10 +131,18 @@ export async function getInventory(req: Request, res: Response) {
 export async function updateInventory(req: Request, res: Response) {
   try {
     const { quality, currentStock5L, type, reason, orderId } = req.body;
-    if (!quality || currentStock5L == null) {
-      return res.status(400).json({ success: false, error: 'Quality grade and stock amount are required' });
+    if (!quality || typeof quality !== 'string') {
+      return res.status(400).json({ success: false, error: 'Quality grade is required' });
     }
-    const item = await inventoryRepository.updateStock(quality, currentStock5L, type, reason, orderId);
+    if (currentStock5L == null) {
+      return res.status(400).json({ success: false, error: 'Stock amount is required' });
+    }
+    const stockNum = Number(currentStock5L);
+    if (typeof currentStock5L !== 'number' || Number.isNaN(stockNum) || !Number.isFinite(stockNum) || stockNum < 0 || stockNum > 100000) {
+      return res.status(400).json({ success: false, error: 'Stock amount must be a non-negative finite integer below 100,000' });
+    }
+
+    const item = await inventoryRepository.updateStock(quality as any, currentStock5L, type, reason, orderId);
     res.json({ success: true, data: item });
   } catch (err: any) {
     console.error('[Firestore] updateInventory error:', err);
@@ -114,11 +172,54 @@ export async function getExpenses(req: Request, res: Response) {
 
 export async function createExpense(req: Request, res: Response) {
   try {
+    const { title, amount } = req.body;
+    if (!title || typeof title !== 'string' || title.trim().length === 0) {
+      return res.status(400).json({ success: false, error: 'Expense title is required' });
+    }
+    if (amount == null) {
+      return res.status(400).json({ success: false, error: 'Expense amount is required' });
+    }
+    const amtNum = Number(amount);
+    if (typeof amount !== 'number' || Number.isNaN(amtNum) || !Number.isFinite(amtNum) || amtNum <= 0) {
+      return res.status(400).json({ success: false, error: 'Expense amount must be a positive finite number' });
+    }
+
     const expense = await expensesRepository.create(req.body);
     res.json({ success: true, data: expense });
   } catch (err: any) {
     console.error('[Firestore] createExpense error:', err);
     res.status(400).json({ success: false, error: sanitizeErrorMessage(err, 'Failed to create expense') });
+  }
+}
+
+export async function createPayment(req: Request, res: Response) {
+  try {
+    const { customerId, amount, notes, idempotencyKey } = req.body;
+    if (!customerId || typeof customerId !== 'string') {
+      return res.status(400).json({ success: false, error: 'Customer ID is required' });
+    }
+    if (amount == null) {
+      return res.status(400).json({ success: false, error: 'Payment amount is required' });
+    }
+
+    const amtNum = Number(amount);
+    if (typeof amount !== 'number' || Number.isNaN(amtNum) || !Number.isFinite(amtNum) || amtNum <= 0) {
+      return res.status(400).json({ success: false, error: 'Payment amount must be a positive finite number' });
+    }
+
+    const recordedBy = (req as any).user?.name || 'System';
+
+    const result = await customersRepository.recordPaymentAtomic({
+      customerId,
+      amount: amtNum,
+      idempotencyKey,
+      recordedBy,
+      notes,
+    });
+    res.json({ success: true, data: result });
+  } catch (err: any) {
+    console.error('[Firestore] createPayment error:', err);
+    res.status(400).json({ success: false, error: sanitizeErrorMessage(err, 'Failed to record payment') });
   }
 }
 
@@ -140,7 +241,8 @@ const WHITELISTED_COLLECTIONS = [
   'auditLogs',
   'samples',
   'telegramPendingActions',
-  'telegramProcessedUpdates'
+  'telegramProcessedUpdates',
+  'returns'
 ];
 
 const READ_ONLY_COLLECTIONS = [
@@ -165,6 +267,18 @@ export async function getGenericCollection(req: Request, res: Response) {
     if (!WHITELISTED_COLLECTIONS.includes(name)) {
       return res.status(400).json({ success: false, error: `Invalid collection name: ${name}` });
     }
+
+    // Explicit Role-Based Collection Level Access Enforcement
+    const userRole = (req as any).user?.role;
+    if (!userRole) {
+      return res.status(401).json({ success: false, error: 'Unauthorized: User role not found' });
+    }
+
+    const allowedRoles = COLLECTION_PERMISSIONS[name]?.read || [];
+    if (userRole !== 'Founder' && !allowedRoles.includes(userRole)) {
+      return res.status(403).json({ success: false, error: `Access Denied: Role ${userRole} is not authorized to read collection ${name}` });
+    }
+
     const docs = await genericRepository.getAll(name as CollectionName);
     res.json({ success: true, collection: name, data: docs });
   } catch (err: any) {
@@ -179,6 +293,18 @@ export async function createGenericDoc(req: Request, res: Response) {
     if (!WHITELISTED_COLLECTIONS.includes(name)) {
       return res.status(400).json({ success: false, error: `Invalid collection name: ${name}` });
     }
+
+    // Explicit Role-Based Collection Level Access Enforcement
+    const userRole = (req as any).user?.role;
+    if (!userRole) {
+      return res.status(401).json({ success: false, error: 'Unauthorized: User role not found' });
+    }
+
+    const allowedRoles = COLLECTION_PERMISSIONS[name]?.write || [];
+    if (userRole !== 'Founder' && !allowedRoles.includes(userRole)) {
+      return res.status(403).json({ success: false, error: `Access Denied: Role ${userRole} is not authorized to write to collection ${name}` });
+    }
+
     if (READ_ONLY_COLLECTIONS.includes(name)) {
       return res.status(403).json({ success: false, error: `Writes to collection ${name} are prohibited via generic API.` });
     }

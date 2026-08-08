@@ -22,6 +22,7 @@ import {
   getProducts,
   getExpenses,
   createExpense,
+  createPayment,
   getGenericCollection,
   createGenericDoc,
 } from './server/api/firestore.controller.js';
@@ -34,6 +35,9 @@ const __dirname = path.dirname(__filename);
 
 const app = express();
 const PORT = config.port;
+
+// Configure Express trust proxy for secure, normalized client IP tracking (req.ip) in Cloud Run
+app.set('trust proxy', true);
 
 // Phase 4: Express Hardening - Dynamic JSON limits based on endpoint
 app.use((req, res, next) => {
@@ -109,6 +113,8 @@ app.get('/api/firestore/products', authenticateToken, requireResourcePermission(
 
 app.get('/api/firestore/expenses', authenticateToken, requireResourcePermission('expenses'), getExpenses);
 app.post('/api/firestore/expenses', authenticateToken, requireRole(['Founder', 'Admin', 'Finance']), createExpense);
+
+app.post('/api/firestore/payments', authenticateToken, requireRole(['Founder', 'Admin', 'Finance', 'Sales']), createPayment);
 
 app.get('/api/firestore/collection/:name', authenticateToken, (req, res, next) => {
   const name = req.params.name;

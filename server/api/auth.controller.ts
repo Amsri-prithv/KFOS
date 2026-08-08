@@ -14,17 +14,59 @@ interface AttemptTracker {
   lockoutTimer: NodeJS.Timeout | null;
   lockedUntil: number;
 }
-const loginAttempts = new Map<string, AttemptTracker>();
+export const loginAttempts = new Map<string, AttemptTracker>();
 
 const LOCKOUT_DURATION = 60 * 1000; // 1 minute lockout
 const MAX_ATTEMPTS = 5;
 
-function getIpAddress(req: Request): string {
-  const forwarded = req.headers['x-forwarded-for'];
-  if (typeof forwarded === 'string') {
-    return forwarded.split(',')[0].trim();
+// Clean up expired rate limiting entries every 5 minutes to avoid memory leaks
+setInterval(() => {
+  const now = Date.now();
+  for (const [ip, tracker] of loginAttempts.entries()) {
+    if (now > tracker.lockedUntil && tracker.attempts >= MAX_ATTEMPTS) {
+      loginAttempts.delete(ip);
+    }
   }
-  return req.socket.remoteAddress || '127.0.0.1';
+}, 5 * 60 * 1000).unref();
+
+function getIpAddress(req: Request): string {
+  return req.ip || req.socket.remoteAddress || '127.0.0.1';
+}
+
+export function resolveRoleFromPin(pin: string, pinsConfig: {
+  founderPin: string;
+  adminPin: string;
+  salesPin: string;
+  opsPin: string;
+  financePin: string;
+  supportPin: string;
+} = config): { id: string; name: string; role: Role } | null {
+  const pinTrimmed = pin.trim();
+  const hashedInput = crypto.createHash('sha256').update(pinTrimmed).digest();
+
+  const roles = [
+    { id: 'usr_founder', name: 'Amsri Prithvi (Founder)', role: 'Founder' as Role, pin: pinsConfig.founderPin },
+    { id: 'usr_admin', name: 'KFOS System Admin', role: 'Admin' as Role, pin: pinsConfig.adminPin },
+    { id: 'usr_sales', name: 'Field Sales Lead', role: 'Sales' as Role, pin: pinsConfig.salesPin },
+    { id: 'usr_ops', name: 'Inventory Operations Lead', role: 'Operations' as Role, pin: pinsConfig.opsPin },
+    { id: 'usr_finance', name: 'Finance & Accounts', role: 'Finance' as Role, pin: pinsConfig.financePin },
+    { id: 'usr_support', name: 'Customer Support', role: 'Support' as Role, pin: pinsConfig.supportPin },
+  ];
+
+  const matches: { id: string; name: string; role: Role }[] = [];
+
+  for (const r of roles) {
+    const hashedRolePin = crypto.createHash('sha256').update(r.pin).digest();
+    if (crypto.timingSafeEqual(hashedInput, hashedRolePin)) {
+      matches.push({ id: r.id, name: r.name, role: r.role });
+    }
+  }
+
+  if (matches.length > 1) {
+    throw new Error('CRITICAL AUTH ERROR: Multiple roles matched the same PIN. Authentication rejected due to role collision.');
+  }
+
+  return matches[0] || null;
 }
 
 export const handleLogin = async (req: Request, res: Response) => {
@@ -46,42 +88,13 @@ export const handleLogin = async (req: Request, res: Response) => {
     return res.status(400).json({ success: false, error: 'Invalid login request' });
   }
 
-  // Construct VALID_PINS dynamically using config values (no fallback in production, safe defaults in dev)
-  const validPins: Record<string, { id: string; name: string; role: Role }> = {
-    [hashPin(config.founderPin)]: {
-      id: 'usr_founder',
-      name: 'Amsri Prithvi (Founder)',
-      role: 'Founder',
-    },
-    [hashPin(config.adminPin)]: {
-      id: 'usr_admin',
-      name: 'KFOS System Admin',
-      role: 'Admin',
-    },
-    [hashPin(config.salesPin)]: {
-      id: 'usr_sales',
-      name: 'Field Sales Lead',
-      role: 'Sales',
-    },
-    [hashPin(config.opsPin)]: {
-      id: 'usr_ops',
-      name: 'Inventory Operations Lead',
-      role: 'Operations',
-    },
-    [hashPin(config.financePin)]: {
-      id: 'usr_finance',
-      name: 'Finance & Accounts',
-      role: 'Finance',
-    },
-    [hashPin(config.supportPin)]: {
-      id: 'usr_support',
-      name: 'Customer Support',
-      role: 'Support',
-    },
-  };
-
-  const hashedInput = hashPin(pin.trim());
-  const account = validPins[hashedInput];
+  let account: { id: string; name: string; role: Role } | null = null;
+  try {
+    account = resolveRoleFromPin(pin);
+  } catch (err: any) {
+    console.error('[Auth] resolveRoleFromPin error:', err);
+    return res.status(401).json({ success: false, error: 'Authentication rejected due to configuration error.' });
+  }
 
   if (!account) {
     // Record failed attempt

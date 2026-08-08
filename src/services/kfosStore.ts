@@ -174,16 +174,7 @@ class KFOSStore {
     this.timeline.unshift(event);
     this.notify();
 
-    try {
-      const headers = await this.getAuthHeaders();
-      await fetch('/api/firestore/collection/auditLogs', {
-        method: 'POST',
-        headers,
-        body: JSON.stringify(event),
-      });
-    } catch (e) {
-      console.warn('[Firestore] Sync audit log error:', e);
-    }
+    // Direct client-side audit logging is disabled to ensure audit log integrity remains strictly server-authoritative.
   }
 
   // Getters
@@ -845,10 +836,14 @@ class KFOSStore {
     this.notify();
 
     this.getAuthHeaders().then((headers) => {
-      fetch('/api/firestore/collection/payments', {
+      fetch('/api/firestore/payments', {
         method: 'POST',
         headers,
-        body: JSON.stringify(payment),
+        body: JSON.stringify({
+          customerId: custId,
+          amount: amount,
+          notes: notes,
+        }),
       }).catch((e) => console.warn('[Firestore] Sync payment error:', e));
     });
 
