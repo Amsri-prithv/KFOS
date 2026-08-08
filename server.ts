@@ -10,6 +10,7 @@ import { handleTelegramMessage } from './server/api/telegram.controller.js';
 import { handleLogin, handleVerify } from './server/api/auth.controller.js';
 import { handleAgentExecution } from './server/api/agents.controller.js';
 import { dbService } from './server/services/db.service.js';
+import { authenticateToken, requireRole, requireResourcePermission } from './server/middleware/auth.js';
 import {
   getCustomers,
   createCustomer,
@@ -35,7 +36,7 @@ const PORT = config.port;
 
 app.use(express.json({ limit: '20mb' }));
 
-// Health Check API
+// Health Check API (Public)
 app.get('/api/health', (req, res) => {
   res.json({
     status: 'online',
@@ -44,42 +45,49 @@ app.get('/api/health', (req, res) => {
   });
 });
 
-// Authentication APIs
+// Authentication APIs (Public)
 app.post('/api/auth/login', handleLogin);
 app.get('/api/auth/verify', handleVerify);
 
-// Database Health Check API
+// Database Health Check API (Public)
 app.get('/api/db/health', async (req, res) => {
   const health = await dbService.getHealthStatus();
   res.json(health);
 });
 
-// Firestore CRUD APIs
-app.get('/api/firestore/customers', getCustomers);
-app.post('/api/firestore/customers', createCustomer);
-
-app.get('/api/firestore/orders', getOrders);
-app.post('/api/firestore/orders', createOrder);
-
-app.get('/api/firestore/inventory', getInventory);
-app.post('/api/firestore/inventory', updateInventory);
-
-app.get('/api/firestore/products', getProducts);
-
-app.get('/api/firestore/expenses', getExpenses);
-app.post('/api/firestore/expenses', createExpense);
-
-app.get('/api/firestore/collection/:name', getGenericCollection);
-app.post('/api/firestore/collection/:name', createGenericDoc);
-
-// Voice & Text NLU Parsing API
-app.post('/api/nlu/parse', handleNluParse);
-
-// Telegram Bot Webhook & Simulator API
+// Telegram Bot Webhook (Public webhook route)
 app.post('/api/telegram/message', handleTelegramMessage);
 
-// AI Agents Execution API
-app.post('/api/agents/execute', handleAgentExecution);
+// Protected Firestore CRUD APIs with Authentication & RBAC
+app.get('/api/firestore/customers', authenticateToken, requireResourcePermission('customers'), getCustomers);
+app.post('/api/firestore/customers', authenticateToken, requireRole(['Founder', 'Admin', 'Sales']), createCustomer);
+
+app.get('/api/firestore/orders', authenticateToken, requireResourcePermission('orders'), getOrders);
+app.post('/api/firestore/orders', authenticateToken, requireRole(['Founder', 'Admin', 'Sales']), createOrder);
+
+app.get('/api/firestore/inventory', authenticateToken, requireResourcePermission('inventory'), getInventory);
+app.post('/api/firestore/inventory', authenticateToken, requireRole(['Founder', 'Admin', 'Operations']), updateInventory);
+
+app.get('/api/firestore/products', authenticateToken, requireResourcePermission('products'), getProducts);
+
+app.get('/api/firestore/expenses', authenticateToken, requireResourcePermission('expenses'), getExpenses);
+app.post('/api/firestore/expenses', authenticateToken, requireRole(['Founder', 'Admin', 'Finance']), createExpense);
+
+app.get('/api/firestore/collection/:name', authenticateToken, (req, res, next) => {
+  const name = req.params.name;
+  return requireResourcePermission(name)(req, res, next);
+}, getGenericCollection);
+
+app.post('/api/firestore/collection/:name', authenticateToken, (req, res, next) => {
+  const name = req.params.name;
+  return requireResourcePermission(name)(req, res, next);
+}, createGenericDoc);
+
+// Voice & Text NLU Parsing API (Protected)
+app.post('/api/nlu/parse', authenticateToken, requireResourcePermission('nlu'), handleNluParse);
+
+// AI Agents Execution API (Protected)
+app.post('/api/agents/execute', authenticateToken, requireResourcePermission('agents'), handleAgentExecution);
 
 // Error Handling Middleware
 app.use(errorHandler);

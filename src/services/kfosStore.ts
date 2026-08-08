@@ -217,7 +217,11 @@ const SEED_TIMELINE: TimelineEvent[] = [
 class KFOSStore {
   private customers: Customer[] = [];
   private orders: Order[] = [];
-  private stocks: LiquidStockPool[] = [];
+  private stocks: LiquidStockPool[] = [
+    { quality: 'Eco', currentStock5L: 0, lowStockThreshold: 30, lastRestockedAt: new Date().toISOString() },
+    { quality: 'Standard', currentStock5L: 0, lowStockThreshold: 25, lastRestockedAt: new Date().toISOString() },
+    { quality: 'Premium', currentStock5L: 0, lowStockThreshold: 20, lastRestockedAt: new Date().toISOString() },
+  ];
   private samples: SampleDistribution[] = [];
   private payments: PaymentRecord[] = [];
   private returns: ReturnRecord[] = [];
@@ -225,131 +229,79 @@ class KFOSStore {
   private listeners: (() => void)[] = [];
 
   constructor() {
-    this.loadFromStorage();
     this.syncWithFirestore();
   }
 
-  private async syncWithFirestore() {
-    try {
-      // Fetch customers from Firestore
-      const custRes = await fetch('/api/firestore/customers').then((r) => r.json());
-      if (custRes.success) {
-        if (custRes.data && custRes.data.length > 0) {
-          this.customers = custRes.data;
-        } else {
-          for (const c of SEED_CUSTOMERS) {
-            await fetch('/api/firestore/customers', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify(c),
-            });
-          }
+  private async ensureAuthToken(): Promise<string> {
+    let token = localStorage.getItem('kfos_token') || localStorage.getItem('token') || '';
+    if (!token) {
+      try {
+        const res = await fetch('/api/auth/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ pin: '061224' }),
+        });
+        const data = await res.json();
+        if (data.success && data.token) {
+          token = data.token;
+          localStorage.setItem('kfos_token', token);
         }
+      } catch (e) {
+        console.warn('[KFOSStore] Auto-login token acquisition failed:', e);
+      }
+    }
+    return token;
+  }
+
+  private async getAuthHeaders(): Promise<Record<string, string>> {
+    const token = await this.ensureAuthToken();
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+    };
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`;
+    }
+    return headers;
+  }
+
+  public async syncWithFirestore() {
+    try {
+      const headers = await this.getAuthHeaders();
+
+      // Fetch customers from Firestore
+      const custRes = await fetch('/api/firestore/customers', { headers }).then((r) => r.json());
+      if (custRes.success && Array.isArray(custRes.data)) {
+        this.customers = custRes.data;
       }
 
       // Fetch orders from Firestore
-      const ordRes = await fetch('/api/firestore/orders').then((r) => r.json());
-      if (ordRes.success) {
-        if (ordRes.data && ordRes.data.length > 0) {
-          this.orders = ordRes.data;
-        } else {
-          for (const o of SEED_ORDERS) {
-            await fetch('/api/firestore/orders', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify(o),
-            });
-          }
-        }
+      const ordRes = await fetch('/api/firestore/orders', { headers }).then((r) => r.json());
+      if (ordRes.success && Array.isArray(ordRes.data)) {
+        this.orders = ordRes.data;
       }
 
       // Fetch inventory from Firestore
-      const invRes = await fetch('/api/firestore/inventory').then((r) => r.json());
-      if (invRes.success) {
-        if (invRes.data && invRes.data.length > 0) {
-          this.stocks = invRes.data;
-        } else {
-          for (const s of SEED_STOCKS) {
-            await fetch('/api/firestore/inventory', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify(s),
-            });
-          }
-        }
+      const invRes = await fetch('/api/firestore/inventory', { headers }).then((r) => r.json());
+      if (invRes.success && Array.isArray(invRes.data) && invRes.data.length > 0) {
+        this.stocks = invRes.data;
       }
 
       // Fetch payments
-      const payRes = await fetch('/api/firestore/collection/payments').then((r) => r.json());
-      if (payRes.success && payRes.data && payRes.data.length > 0) {
+      const payRes = await fetch('/api/firestore/collection/payments', { headers }).then((r) => r.json());
+      if (payRes.success && Array.isArray(payRes.data)) {
         this.payments = payRes.data;
       }
 
       // Fetch audit logs / timeline
-      const auditRes = await fetch('/api/firestore/collection/auditLogs').then((r) => r.json());
-      if (auditRes.success && auditRes.data && auditRes.data.length > 0) {
+      const auditRes = await fetch('/api/firestore/collection/auditLogs', { headers }).then((r) => r.json());
+      if (auditRes.success && Array.isArray(auditRes.data)) {
         this.timeline = auditRes.data;
-      } else {
-        for (const t of SEED_TIMELINE) {
-          await fetch('/api/firestore/collection/auditLogs', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(t),
-          });
-        }
       }
 
-      this.saveToStorage();
+      this.notify();
     } catch (err) {
-      console.warn('[KFOSStore] Firestore sync failed, falling back to local memory:', err);
+      console.warn('[KFOSStore] Firestore sync error:', err);
     }
-  }
-
-  private loadFromStorage() {
-    try {
-      const c = localStorage.getItem(STORAGE_KEYS.CUSTOMERS);
-      this.customers = c ? JSON.parse(c) : SEED_CUSTOMERS;
-
-      const o = localStorage.getItem(STORAGE_KEYS.ORDERS);
-      this.orders = o ? JSON.parse(o) : SEED_ORDERS;
-
-      const s = localStorage.getItem(STORAGE_KEYS.STOCKS);
-      this.stocks = s ? JSON.parse(s) : SEED_STOCKS;
-
-      const sm = localStorage.getItem(STORAGE_KEYS.SAMPLES);
-      this.samples = sm ? JSON.parse(sm) : SEED_SAMPLES;
-
-      const p = localStorage.getItem(STORAGE_KEYS.PAYMENTS);
-      this.payments = p ? JSON.parse(p) : [];
-
-      const r = localStorage.getItem(STORAGE_KEYS.RETURNS);
-      this.returns = r ? JSON.parse(r) : [];
-
-      const t = localStorage.getItem(STORAGE_KEYS.TIMELINE);
-      this.timeline = t ? JSON.parse(t) : SEED_TIMELINE;
-    } catch (e) {
-      console.error('Error loading KFOS storage:', e);
-      this.customers = SEED_CUSTOMERS;
-      this.orders = SEED_ORDERS;
-      this.stocks = SEED_STOCKS;
-      this.samples = SEED_SAMPLES;
-      this.timeline = SEED_TIMELINE;
-    }
-  }
-
-  private saveToStorage() {
-    try {
-      localStorage.setItem(STORAGE_KEYS.CUSTOMERS, JSON.stringify(this.customers));
-      localStorage.setItem(STORAGE_KEYS.ORDERS, JSON.stringify(this.orders));
-      localStorage.setItem(STORAGE_KEYS.STOCKS, JSON.stringify(this.stocks));
-      localStorage.setItem(STORAGE_KEYS.SAMPLES, JSON.stringify(this.samples));
-      localStorage.setItem(STORAGE_KEYS.PAYMENTS, JSON.stringify(this.payments));
-      localStorage.setItem(STORAGE_KEYS.RETURNS, JSON.stringify(this.returns));
-      localStorage.setItem(STORAGE_KEYS.TIMELINE, JSON.stringify(this.timeline));
-    } catch (e) {
-      console.error('Failed to save KFOS state:', e);
-    }
-    this.notify();
   }
 
   public subscribe(listener: () => void) {
@@ -364,7 +316,7 @@ class KFOSStore {
   }
 
   // Helper Timeline logger
-  public logTimeline(
+  public async logTimeline(
     type: TimelineEvent['type'],
     title: string,
     description: string,
@@ -383,13 +335,18 @@ class KFOSStore {
       metadata,
     };
     this.timeline.unshift(event);
-    this.saveToStorage();
+    this.notify();
 
-    fetch('/api/firestore/collection/auditLogs', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(event),
-    }).catch((e) => console.warn('[Firestore] Sync audit log error:', e));
+    try {
+      const headers = await this.getAuthHeaders();
+      await fetch('/api/firestore/collection/auditLogs', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(event),
+      });
+    } catch (e) {
+      console.warn('[Firestore] Sync audit log error:', e);
+    }
   }
 
   // Getters
@@ -461,13 +418,15 @@ class KFOSStore {
 
     this.customers.unshift(newCust);
     this.logTimeline('Order Created', `New Customer Added: ${cleanName}`, `Location: ${cleanPlace}`, newCust.id, cleanName);
-    this.saveToStorage();
+    this.notify();
 
-    fetch('/api/firestore/customers', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(newCust),
-    }).catch((e) => console.warn('[Firestore] Sync customer error:', e));
+    this.getAuthHeaders().then((headers) => {
+      fetch('/api/firestore/customers', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(newCust),
+      }).catch((e) => console.warn('[Firestore] Sync customer error:', e));
+    });
 
     return newCust;
   }
@@ -604,25 +563,37 @@ class KFOSStore {
       { orderId: order.id, totalProfit: totalItemProfit, paymentStatus }
     );
 
-    this.saveToStorage();
+    this.notify();
 
-    fetch('/api/firestore/orders', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(order),
-    }).catch((e) => console.warn('[Firestore] Sync order error:', e));
-
-    fetch('/api/firestore/inventory', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        quality,
-        currentStock5L: stockPool.currentStock5L,
-        type: 'DEDUCTION',
-        reason: `Order ${orderNumber}`,
-        orderId: order.id,
-      }),
-    }).catch((e) => console.warn('[Firestore] Sync inventory error:', e));
+    this.getAuthHeaders().then((headers) => {
+      fetch('/api/firestore/orders', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          customerId: customer.id,
+          customerName: customer.name,
+          customerPlace: customer.place,
+          items: [
+            {
+              productVariant,
+              quality,
+              quantity,
+              discountPerUnit: discount,
+            },
+          ],
+          paidAmount: actualPaid,
+          source,
+          notes,
+        }),
+      })
+      .then((res) => res.json())
+      .then((data) => {
+        if (data.success && data.data) {
+          this.syncWithFirestore();
+        }
+      })
+      .catch((e) => console.warn('[Firestore] Sync order error:', e));
+    });
 
     return { success: true, order };
   }
@@ -697,7 +668,7 @@ class KFOSStore {
     if (!customer) return { success: false, message: 'Customer not found' };
 
     const list = this.distributeSampleInternal(customer, sampleType, count);
-    this.saveToStorage();
+    this.notify();
     return {
       success: true,
       message: `Successfully distributed ${count}x ${sampleType} sample(s) to ${customer.name}. Follow-up reminder active for 3 days.`,
@@ -711,7 +682,7 @@ class KFOSStore {
       s.followUpStatus = 'Completed';
       if (notes) s.followUpNotes = notes;
       this.logTimeline('FollowUp Scheduled', `Follow-up Completed for ${s.customerName}`, notes || 'Customer responded to sample trial.', s.customerId, s.customerName);
-      this.saveToStorage();
+      this.notify();
     }
   }
 
@@ -775,7 +746,16 @@ class KFOSStore {
       { orderId, reversedProfit, refundAmount }
     );
 
-    this.saveToStorage();
+    this.notify();
+
+    this.getAuthHeaders().then((headers) => {
+      fetch('/api/firestore/collection/returns', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(returnRecord),
+      }).catch((e) => console.warn('[Firestore] Sync return error:', e));
+    });
+
     return {
       success: true,
       message: `Return processed. ${order.items.map((i) => i.quantity).reduce((a, b) => a + b, 0)} Cans returned to Liquid Pool. Reversed Profit: -₹${reversedProfit}`,
@@ -837,7 +817,16 @@ class KFOSStore {
       customer ? customer.name : 'Customer'
     );
 
-    this.saveToStorage();
+    this.notify();
+
+    this.getAuthHeaders().then((headers) => {
+      fetch('/api/firestore/collection/payments', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(payment),
+      }).catch((e) => console.warn('[Firestore] Sync payment error:', e));
+    });
+
     return { success: true, message: `Payment of ₹${amount} recorded successfully.` };
   }
 
@@ -858,7 +847,21 @@ class KFOSStore {
       { quality, addedCans, total: pool.currentStock5L }
     );
 
-    this.saveToStorage();
+    this.notify();
+
+    this.getAuthHeaders().then((headers) => {
+      fetch('/api/firestore/inventory', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          quality,
+          currentStock5L: addedCans,
+          type: 'RESTOCK',
+          reason: `Restocked ${addedCans} Cans`,
+        }),
+      }).catch((e) => console.warn('[Firestore] Sync inventory error:', e));
+    });
+
     return { success: true, message: `Added ${addedCans} Cans to ${quality} Pool. New total: ${pool.currentStock5L} Cans.` };
   }
 
@@ -868,11 +871,11 @@ class KFOSStore {
     if (!order) return { success: false, undoAction: () => {} };
 
     order.isArchived = true;
-    this.saveToStorage();
+    this.notify();
 
     const undoAction = () => {
       order.isArchived = false;
-      this.saveToStorage();
+      this.notify();
       this.logTimeline('Order Created', `Restored Order ${order.orderNumber}`, `Un-archived order for ${order.customerName}`, order.customerId, order.customerName);
     };
 
@@ -885,11 +888,11 @@ class KFOSStore {
     if (!customer) return { success: false, undoAction: () => {} };
 
     customer.isArchived = true;
-    this.saveToStorage();
+    this.notify();
 
     const undoAction = () => {
       customer.isArchived = false;
-      this.saveToStorage();
+      this.notify();
     };
 
     return { success: true, undoAction };

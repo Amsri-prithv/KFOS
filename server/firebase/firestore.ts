@@ -25,21 +25,33 @@ export function getCollectionRef(collectionName: CollectionName) {
   return firestoreDb.collection(collectionName);
 }
 
+function removeUndefined<T extends Record<string, any>>(obj: T): T {
+  const clean: Record<string, any> = {};
+  for (const [k, v] of Object.entries(obj)) {
+    if (v !== undefined) {
+      clean[k] = v;
+    }
+  }
+  return clean as T;
+}
+
 export function prepareDataForInsert<T extends Record<string, any>>(data: T): T & { createdAt: string; updatedAt: string } {
   const now = new Date().toISOString();
-  return {
+  const prepared = {
     ...data,
     createdAt: data.createdAt || now,
     updatedAt: now,
   };
+  return removeUndefined(prepared);
 }
 
 export function prepareDataForUpdate<T extends Record<string, any>>(data: Partial<T>): Partial<T> & { updatedAt: string } {
   const now = new Date().toISOString();
-  return {
+  const prepared = {
     ...data,
     updatedAt: now,
   };
+  return removeUndefined(prepared);
 }
 
 export { firestoreDb };

@@ -17,14 +17,28 @@ export const AdminModal: React.FC<AdminModalProps> = ({
   const [pinInput, setPinInput] = useState('');
   const [errorMsg, setErrorMsg] = useState('');
 
-  const handleUnlock = (e: React.FormEvent) => {
+  const handleUnlock = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (pinInput.trim() === '6124') {
-      onUnlockSuccess();
-      setPinInput('');
-      setErrorMsg('');
-    } else {
-      setErrorMsg('Incorrect Admin Password / PIN. Access Denied.');
+    try {
+      const res = await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pin: pinInput.trim() }),
+      });
+      const data = await res.json();
+      if (data.success && data.token) {
+        localStorage.setItem('kfos_token', data.token);
+        if (data.user?.role) {
+          localStorage.setItem('kfos_role', data.user.role);
+        }
+        onUnlockSuccess();
+        setPinInput('');
+        setErrorMsg('');
+      } else {
+        setErrorMsg(data.error || 'Incorrect Admin Password / PIN. Access Denied.');
+      }
+    } catch (err: any) {
+      setErrorMsg('Authentication error. Please try again.');
     }
   };
 

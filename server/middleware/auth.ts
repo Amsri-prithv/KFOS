@@ -1,12 +1,9 @@
 import { Request, Response, NextFunction } from 'express';
-import { config } from '../config/env.js';
+import { verifyToken, UserTokenPayload } from '../utils/jwt.js';
+import { hasPermission, Role } from '../config/permissions.js';
 
 export interface AuthenticatedRequest extends Request {
-  user?: {
-    id: string;
-    name: string;
-    role: 'Founder' | 'Admin' | 'Sales' | 'Operations' | 'Finance' | 'Support';
-  };
+  user?: UserTokenPayload;
 }
 
 export const authenticateToken = (
@@ -15,44 +12,59 @@ export const authenticateToken = (
   next: NextFunction
 ) => {
   const authHeader = req.headers['authorization'];
-  const token = authHeader && authHeader.split(' ')[1];
+  const token = authHeader && authHeader.startsWith('Bearer ') ? authHeader.slice(7) : authHeader;
 
   if (!token) {
-    // For local dev / default session fallback
-    req.user = {
-      id: 'usr_founder',
-      name: 'Amsri Prithvi (Founder)',
-      role: 'Founder',
-    };
-    return next();
+    return res.status(401).json({
+      success: false,
+      error: 'Authentication required. Authorization token missing.',
+    });
   }
 
-  // Simplified token check for demo/dev authentication
-  if (token === 'kfos_admin_token' || token === config.adminPin) {
-    req.user = {
-      id: 'usr_founder',
-      name: 'Amsri Prithvi (Founder)',
-      role: 'Founder',
-    };
-    return next();
+  const payload = verifyToken(token);
+  if (!payload) {
+    return res.status(401).json({
+      success: false,
+      error: 'Authentication failed. Invalid or expired token.',
+    });
   }
 
-  req.user = {
-    id: 'usr_sales_field',
-    name: 'Field Sales Officer',
-    role: 'Sales',
-  };
+  req.user = payload;
   next();
 };
 
-export const requireRole = (allowedRoles: string[]) => {
+export const requireRole = (allowedRoles: Role[]) => {
   return (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
-    if (!req.user || !allowedRoles.includes(req.user.role)) {
-      return res.status(403).json({
-        error: 'Access denied: Insufficient role permissions.',
-        requiredRoles: allowedRoles,
-      });
+    if (!req.user) {
+      return res.status(401).json({ success: false, error: 'Unauthenticated user.' });
     }
-    next();
+
+    if (req.user.role === 'Founder' || allowedRoles.includes(req.user.role)) {
+      return next();
+    }
+
+    return res.status(403).json({
+      success: false,
+      error: 'Access denied: Insufficient role permissions.',
+      userRole: req.user.role,
+      requiredRoles: allowedRoles,
+    });
+  };
+};
+
+export const requireResourcePermission = (resource: string) => {
+  return (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+    if (!req.user) {
+      return res.status(401).json({ success: false, error: 'Unauthenticated user.' });
+    }
+
+    if (hasPermission(req.user.role, resource)) {
+      return next();
+    }
+
+    return res.status(403).json({
+      success: false,
+      error: `Access denied: Role ${req.user.role} lacks permission for ${resource}.`,
+    });
   };
 };
