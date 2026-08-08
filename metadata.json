@@ -1,0 +1,6 @@
+{
+  "name": "KFOS - Kashmeer Fragrances Operating System",
+  "description": "Voice-first business operating system for field sales, liquid inventory pool management, order processing, and Telegram bot integration.",
+  "requestFramePermissions": ["microphone"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
