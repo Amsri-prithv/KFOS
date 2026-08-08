@@ -25,6 +25,8 @@ const databaseId =
 
 const apiKey = config.apiKey || process.env.FIREBASE_API_KEY || '';
 
+const isProduction = process.env.NODE_ENV === 'production';
+
 let adminApp: App;
 
 function initAdminApp(): App {
@@ -40,8 +42,23 @@ function initAdminApp(): App {
         projectId,
       });
       return adminApp;
-    } catch (e) {
+    } catch (e: any) {
       console.error('[Firebase Admin] Error parsing FIREBASE_SERVICE_ACCOUNT_KEY:', e);
+      if (isProduction) {
+        throw new Error(`CRITICAL: Failed to parse FIREBASE_SERVICE_ACCOUNT_KEY in production: ${e.message}`);
+      }
+    }
+  }
+
+  if (isProduction) {
+    try {
+      adminApp = initializeApp({
+        projectId,
+      });
+      return adminApp;
+    } catch (e: any) {
+      console.error('[Firebase Admin] Failed to initialize default credentials in production:', e);
+      throw new Error(`CRITICAL: Firebase Admin initialization failed: ${e.message}`);
     }
   }
 
@@ -58,7 +75,20 @@ const nativeFirestore = databaseId && databaseId !== '(default)'
   ? getFirestore(firebaseApp, databaseId)
   : getFirestore(firebaseApp);
 
-// REST fallback helpers for local dev container environment where ADC is not configured
+// Use native database if in production or if a Service Account Key is explicitly set
+const useNativeDb = isProduction || Boolean(process.env.FIREBASE_SERVICE_ACCOUNT_KEY);
+
+// ============================================================================
+// PRODUCTION Architecture: Pure, unmodified Firebase Admin SDK
+// ============================================================================
+//
+// When useNativeDb is true (always in production), firestoreDb is strictly 
+// nativeFirestore. No mock adapters, no in-memory fallbacks, no REST wrappers.
+//
+// ============================================================================
+// TEST/DEVELOPMENT Architecture: Local Mock Adapter & REST Fallback
+// ============================================================================
+
 const baseUrl = `https://firestore.googleapis.com/v1/projects/${projectId}/databases/${databaseId || '(default)'}/documents`;
 
 let cachedAccessToken: string | null = null;
@@ -146,252 +176,301 @@ function extractDocId(name: string): string {
   return parts[parts.length - 1];
 }
 
-const useNativeDb = Boolean(process.env.FIREBASE_SERVICE_ACCOUNT_KEY);
+function createMockFirestoreDb() {
+  const inMemoryDb: Record<string, Record<string, any>> = {};
 
-const inMemoryDb: Record<string, Record<string, any>> = {};
+  function getMemCollection(col: string) {
+    if (!inMemoryDb[col]) inMemoryDb[col] = {};
+    return inMemoryDb[col];
+  }
 
-function getMemCollection(col: string) {
-  if (!inMemoryDb[col]) inMemoryDb[col] = {};
-  return inMemoryDb[col];
-}
+  class HybridDocRef {
+    constructor(public collectionName: string, public id: string) {}
 
-class HybridDocRef {
-  constructor(public collectionName: string, public id: string) {}
-
-  async get(): Promise<any> {
-    if (useNativeDb) {
+    async get(): Promise<any> {
       try {
-        const snap = await nativeFirestore.collection(this.collectionName).doc(this.id).get();
-        if (snap.exists) {
-          getMemCollection(this.collectionName)[this.id] = snap.data();
-          return snap;
+        const url = `${baseUrl}/${this.collectionName}/${this.id}?key=${apiKey}`;
+        const headers = await getRestAuthHeaders();
+        const res = await fetch(url, { headers });
+        if (res.ok) {
+          const json = await res.json();
+          const dataObj = fromFirestoreFields(json.fields || {});
+          getMemCollection(this.collectionName)[this.id] = dataObj;
+          return {
+            id: extractDocId(json.name || this.id),
+            exists: true,
+            data: () => dataObj,
+          };
         }
-      } catch (e: any) {
-        if (!e?.message?.includes('PERMISSION_DENIED') && !e?.message?.includes('UNAUTHENTICATED') && e?.code !== 7) {
-          throw e;
-        }
+      } catch (err) {
+        // ignore in mock mode
       }
-    }
-    try {
-      const url = `${baseUrl}/${this.collectionName}/${this.id}?key=${apiKey}`;
-      const headers = await getRestAuthHeaders();
-      const res = await fetch(url, { headers });
-      if (res.ok) {
-        const json = await res.json();
-        const dataObj = fromFirestoreFields(json.fields || {});
-        getMemCollection(this.collectionName)[this.id] = dataObj;
+
+      const memData = getMemCollection(this.collectionName)[this.id];
+      if (memData !== undefined) {
         return {
-          id: extractDocId(json.name || this.id),
+          id: this.id,
           exists: true,
-          data: () => dataObj,
+          data: () => memData,
         };
       }
-    } catch (err) {
-      // ignore
+
+      return { id: this.id, exists: false, data: () => null };
     }
 
-    const memData = getMemCollection(this.collectionName)[this.id];
-    if (memData !== undefined) {
-      return {
-        id: this.id,
-        exists: true,
-        data: () => memData,
+    async set(data: Record<string, any>): Promise<any> {
+      getMemCollection(this.collectionName)[this.id] = { ...data };
+      const isTestEnv = process.env.NODE_ENV === 'test' || process.env.VITEST === 'true' || !apiKey;
+      try {
+        const patchUrl = `${baseUrl}/${this.collectionName}/${this.id}?key=${apiKey}`;
+        const fields = toFirestoreFields(data);
+        const headers = await getRestAuthHeaders();
+        const res = await fetch(patchUrl, {
+          method: 'PATCH',
+          headers,
+          body: JSON.stringify({ fields }),
+        });
+        if (!res.ok) {
+          if (isTestEnv) {
+            console.warn(`[Firestore Hybrid REST Warning] REST fallback returned ${res.status} in test environment. Ignoring error.`);
+          } else {
+            throw new Error(`REST fallback failed with status ${res.status}`);
+          }
+        }
+      } catch (err: any) {
+        if (isTestEnv) {
+          console.warn(`[Firestore Hybrid REST Warning] REST fallback fetch error: ${err.message || err}. Ignoring error.`);
+        } else {
+          console.error(`[Firestore Hybrid REST] set error for ${this.collectionName}/${this.id}:`, err);
+          throw err;
+        }
+      }
+    }
+
+    async update(updates: Record<string, any>): Promise<any> {
+      const existing = getMemCollection(this.collectionName)[this.id] || {};
+      getMemCollection(this.collectionName)[this.id] = { ...existing, ...updates };
+
+      const isTestEnv = process.env.NODE_ENV === 'test' || process.env.VITEST === 'true' || !apiKey;
+      try {
+        const fieldPaths = Object.keys(updates);
+        const updateMask = fieldPaths.map((p) => `updateMask.fieldPaths=${encodeURIComponent(p)}`).join('&');
+        const url = `${baseUrl}/${this.collectionName}/${this.id}?${updateMask}&key=${apiKey}`;
+        const fields = toFirestoreFields(updates);
+        const headers = await getRestAuthHeaders();
+        const res = await fetch(url, {
+          method: 'PATCH',
+          headers,
+          body: JSON.stringify({ fields }),
+        });
+        if (!res.ok) {
+          if (isTestEnv) {
+            console.warn(`[Firestore Hybrid REST Warning] REST fallback returned ${res.status} in test environment. Ignoring error.`);
+          } else {
+            throw new Error(`REST fallback failed with status ${res.status}`);
+          }
+        }
+      } catch (err: any) {
+        if (isTestEnv) {
+          console.warn(`[Firestore Hybrid REST Warning] REST fallback fetch error: ${err.message || err}. Ignoring error.`);
+        } else {
+          console.error(`[Firestore Hybrid REST] update error for ${this.collectionName}/${this.id}:`, err);
+          throw err;
+        }
+      }
+    }
+
+    async delete(): Promise<any> {
+      delete getMemCollection(this.collectionName)[this.id];
+      const isTestEnv = process.env.NODE_ENV === 'test' || process.env.VITEST === 'true' || !apiKey;
+      try {
+        const url = `${baseUrl}/${this.collectionName}/${this.id}?key=${apiKey}`;
+        const headers = await getRestAuthHeaders();
+        const res = await fetch(url, { method: 'DELETE', headers });
+        if (!res.ok && res.status !== 404) {
+          if (isTestEnv) {
+            console.warn(`[Firestore Hybrid REST Warning] REST fallback returned ${res.status} in test environment. Ignoring error.`);
+          } else {
+            throw new Error(`REST fallback failed with status ${res.status}`);
+          }
+        }
+      } catch (err: any) {
+        if (isTestEnv) {
+          console.warn(`[Firestore Hybrid REST Warning] REST fallback fetch error: ${err.message || err}. Ignoring error.`);
+        } else {
+          console.error(`[Firestore Hybrid REST] delete error for ${this.collectionName}/${this.id}:`, err);
+          throw err;
+        }
+      }
+    }
+  }
+
+  class HybridCollectionRef {
+    public firestore: any;
+
+    constructor(public collectionName: string) {
+      this.firestore = {
+        batch: () => db.batch(),
       };
     }
 
-    return { id: this.id, exists: false, data: () => null };
-  }
+    doc(id: string) {
+      return new HybridDocRef(this.collectionName, id);
+    }
 
-  async set(data: Record<string, any>): Promise<any> {
-    getMemCollection(this.collectionName)[this.id] = { ...data };
-    if (useNativeDb) {
+    async get(): Promise<any> {
       try {
-        return await nativeFirestore.collection(this.collectionName).doc(this.id).set(data);
-      } catch (e: any) {
-        if (!e?.message?.includes('PERMISSION_DENIED') && !e?.message?.includes('UNAUTHENTICATED') && e?.code !== 7) {
-          throw e;
-        }
-      }
-    }
-    try {
-      const patchUrl = `${baseUrl}/${this.collectionName}/${this.id}?key=${apiKey}`;
-      const fields = toFirestoreFields(data);
-      const headers = await getRestAuthHeaders();
-      await fetch(patchUrl, {
-        method: 'PATCH',
-        headers,
-        body: JSON.stringify({ fields }),
-      });
-    } catch (err) {
-      // ignore REST fallback error
-    }
-    return;
-  }
-
-  async update(updates: Record<string, any>): Promise<any> {
-    const existing = getMemCollection(this.collectionName)[this.id] || {};
-    getMemCollection(this.collectionName)[this.id] = { ...existing, ...updates };
-
-    if (useNativeDb) {
-      try {
-        return await nativeFirestore.collection(this.collectionName).doc(this.id).update(updates);
-      } catch (e: any) {
-        if (!e?.message?.includes('PERMISSION_DENIED') && !e?.message?.includes('UNAUTHENTICATED') && e?.code !== 7) {
-          throw e;
-        }
-      }
-    }
-    try {
-      const fieldPaths = Object.keys(updates);
-      const updateMask = fieldPaths.map((p) => `updateMask.fieldPaths=${encodeURIComponent(p)}`).join('&');
-      const url = `${baseUrl}/${this.collectionName}/${this.id}?${updateMask}&key=${apiKey}`;
-      const fields = toFirestoreFields(updates);
-      const headers = await getRestAuthHeaders();
-      await fetch(url, {
-        method: 'PATCH',
-        headers,
-        body: JSON.stringify({ fields }),
-      });
-    } catch (err) {
-      // ignore
-    }
-    return;
-  }
-
-  async delete(): Promise<any> {
-    delete getMemCollection(this.collectionName)[this.id];
-    if (useNativeDb) {
-      try {
-        return await nativeFirestore.collection(this.collectionName).doc(this.id).delete();
-      } catch (e: any) {
-        if (!e?.message?.includes('PERMISSION_DENIED') && !e?.message?.includes('UNAUTHENTICATED') && e?.code !== 7) {
-          throw e;
-        }
-      }
-    }
-    try {
-      const url = `${baseUrl}/${this.collectionName}/${this.id}?key=${apiKey}`;
-      const headers = await getRestAuthHeaders();
-      await fetch(url, { method: 'DELETE', headers });
-    } catch (err) {
-      // ignore
-    }
-    return;
-  }
-}
-
-class HybridCollectionRef {
-  public firestore: any;
-
-  constructor(public collectionName: string) {
-    this.firestore = {
-      batch: () => firestoreDb.batch(),
-    };
-  }
-
-  doc(id: string) {
-    return new HybridDocRef(this.collectionName, id);
-  }
-
-  async get(): Promise<any> {
-    if (useNativeDb) {
-      try {
-        const snap = await nativeFirestore.collection(this.collectionName).get();
-        if (snap.docs.length > 0) {
-          snap.docs.forEach((d: any) => {
-            getMemCollection(this.collectionName)[d.id] = d.data();
+        const url = `${baseUrl}/${this.collectionName}?key=${apiKey}`;
+        const headers = await getRestAuthHeaders();
+        const res = await fetch(url, { headers });
+        if (res.ok) {
+          const json = await res.json();
+          const documents = json.documents || [];
+          documents.forEach((docJson: any) => {
+            const docId = extractDocId(docJson.name);
+            const dataObj = fromFirestoreFields(docJson.fields || {});
+            getMemCollection(this.collectionName)[docId] = dataObj;
           });
-          return snap;
         }
-      } catch (e: any) {
-        if (!e?.message?.includes('PERMISSION_DENIED') && !e?.message?.includes('UNAUTHENTICATED') && e?.code !== 7) {
-          throw e;
+      } catch (err) {
+        // ignore in mock mode
+      }
+
+      const colObj = getMemCollection(this.collectionName);
+      const docs = Object.entries(colObj).map(([id, data]) => ({
+        id,
+        exists: true,
+        data: () => data,
+      }));
+
+      return { docs };
+    }
+  }
+
+  class HybridBatch {
+    private ops: Array<{ type: 'set' | 'update' | 'delete'; ref: HybridDocRef; data?: any }> = [];
+
+    set(ref: HybridDocRef, data: any) {
+      this.ops.push({ type: 'set', ref, data });
+    }
+
+    update(ref: HybridDocRef, data: any) {
+      this.ops.push({ type: 'update', ref, data });
+    }
+
+    delete(ref: HybridDocRef) {
+      this.ops.push({ type: 'delete', ref });
+    }
+
+    async commit() {
+      for (const op of this.ops) {
+        if (op.type === 'set') {
+          await op.ref.set(op.data);
+        } else if (op.type === 'update') {
+          await op.ref.update(op.data);
+        } else if (op.type === 'delete') {
+          await op.ref.delete();
         }
       }
     }
-    try {
-      const url = `${baseUrl}/${this.collectionName}?key=${apiKey}`;
-      const headers = await getRestAuthHeaders();
-      const res = await fetch(url, { headers });
-      if (res.ok) {
-        const json = await res.json();
-        const documents = json.documents || [];
-        documents.forEach((docJson: any) => {
-          const docId = extractDocId(docJson.name);
-          const dataObj = fromFirestoreFields(docJson.fields || {});
-          getMemCollection(this.collectionName)[docId] = dataObj;
+  }
+
+  let mockTransactionChain: Promise<any> = Promise.resolve();
+
+  const db = {
+    collection(name: string) {
+      return new HybridCollectionRef(name);
+    },
+    batch() {
+      return new HybridBatch();
+    },
+    async runTransaction(updateFunction: (transaction: any) => Promise<any>) {
+      const resultPromise = new Promise((resolve, reject) => {
+        mockTransactionChain = mockTransactionChain.then(async () => {
+          const txChanges: Array<{ col: string; id: string; originalVal: any; hadValue: boolean }> = [];
+
+          const transactionObject = {
+            async get(ref: HybridDocRef) {
+              return await ref.get();
+            },
+            set(ref: HybridDocRef, data: any) {
+              const col = ref.collectionName;
+              const id = ref.id;
+              const memCol = getMemCollection(col);
+              const hadValue = id in memCol;
+              txChanges.push({
+                col,
+                id,
+                originalVal: hadValue ? JSON.parse(JSON.stringify(memCol[id])) : undefined,
+                hadValue,
+              });
+              return ref.set(data);
+            },
+            update(ref: HybridDocRef, data: any) {
+              const col = ref.collectionName;
+              const id = ref.id;
+              const memCol = getMemCollection(col);
+              const hadValue = id in memCol;
+              txChanges.push({
+                col,
+                id,
+                originalVal: hadValue ? JSON.parse(JSON.stringify(memCol[id])) : undefined,
+                hadValue,
+              });
+              return ref.update(data);
+            },
+            delete(ref: HybridDocRef) {
+              const col = ref.collectionName;
+              const id = ref.id;
+              const memCol = getMemCollection(col);
+              const hadValue = id in memCol;
+              txChanges.push({
+                col,
+                id,
+                originalVal: hadValue ? JSON.parse(JSON.stringify(memCol[id])) : undefined,
+                hadValue,
+              });
+              return ref.delete();
+            },
+          };
+
+          try {
+            const result = await updateFunction(transactionObject);
+            resolve(result);
+          } catch (err) {
+            console.warn('[Mock Firestore Transaction] Transaction failed, rolling back only this transaction\'s in-memory mutations.');
+            for (let i = txChanges.length - 1; i >= 0; i--) {
+              const change = txChanges[i];
+              const memCol = getMemCollection(change.col);
+              if (change.hadValue) {
+                memCol[change.id] = change.originalVal;
+              } else {
+                delete memCol[change.id];
+              }
+            }
+            reject(err);
+          }
+        }).catch(() => {
+          // Prevent the chain from breaking/halting if a transaction fails
         });
-      }
-    } catch (err) {
-      // ignore
+      });
+
+      return resultPromise;
     }
+  };
 
-    const colObj = getMemCollection(this.collectionName);
-    const docs = Object.entries(colObj).map(([id, data]) => ({
-      id,
-      exists: true,
-      data: () => data,
-    }));
-
-    return { docs };
-  }
+  return db;
 }
 
-class HybridBatch {
-  private ops: Array<{ type: 'set' | 'update' | 'delete'; ref: HybridDocRef; data?: any }> = [];
-
-  set(ref: HybridDocRef, data: any) {
-    this.ops.push({ type: 'set', ref, data });
-  }
-
-  update(ref: HybridDocRef, data: any) {
-    this.ops.push({ type: 'update', ref, data });
-  }
-
-  delete(ref: HybridDocRef) {
-    this.ops.push({ type: 'delete', ref });
-  }
-
-  async commit() {
-    for (const op of this.ops) {
-      if (op.type === 'set') {
-        await op.ref.set(op.data);
-      } else if (op.type === 'update') {
-        await op.ref.update(op.data);
-      } else if (op.type === 'delete') {
-        await op.ref.delete();
-      }
-    }
-  }
-}
-
-export const firestoreDb: any = {
-  collection(name: string) {
-    return new HybridCollectionRef(name);
-  },
-  batch() {
-    return new HybridBatch();
-  },
-  async runTransaction(updateFunction: (transaction: any) => Promise<any>) {
-    const transactionObject = {
-      async get(ref: HybridDocRef) {
-        return await ref.get();
-      },
-      set(ref: HybridDocRef, data: any) {
-        return ref.set(data);
-      },
-      update(ref: HybridDocRef, data: any) {
-        return ref.update(data);
-      },
-      delete(ref: HybridDocRef) {
-        return ref.delete();
-      },
-    };
-    return await updateFunction(transactionObject);
-  },
-};
+// Strictly export the database instance.
+export const firestoreDb: any = useNativeDb
+  ? nativeFirestore
+  : createMockFirestoreDb();
 
 export function getFirestoreDb(): Firestore {
+  if (isProduction || useNativeDb) {
+    return nativeFirestore;
+  }
   return firestoreDb;
 }
 

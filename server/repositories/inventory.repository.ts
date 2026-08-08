@@ -1,5 +1,6 @@
 import { getCollectionRef, COLLECTIONS, prepareDataForInsert, prepareDataForUpdate, firestoreDb } from '../firebase/firestore.js';
 import { LiquidStockPool, QualityGrade } from '../../src/types/kfos.js';
+import { randomUUID } from 'node:crypto';
 
 export interface InventoryDoc extends LiquidStockPool {
   id: string;
@@ -61,7 +62,7 @@ export const inventoryRepository = {
 
       tx.set(stockRef, updatedStockDoc);
 
-      const txId = `tx-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
+      const txId = `tx-${randomUUID()}`;
       const txRef = getCollectionRef(COLLECTIONS.INVENTORY_TRANSACTIONS).doc(txId);
       const txDoc = prepareDataForInsert({
         id: txId,

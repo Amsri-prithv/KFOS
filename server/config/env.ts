@@ -1,3 +1,6 @@
+import dotenv from 'dotenv';
+dotenv.config();
+
 const isProduction = process.env.NODE_ENV === 'production';
 
 // Fail fast in production if critical environment variables are missing

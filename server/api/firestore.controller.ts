@@ -101,10 +101,41 @@ export async function createExpense(req: Request, res: Response) {
   }
 }
 
+const WHITELISTED_COLLECTIONS = [
+  'customers',
+  'products',
+  'productVariants',
+  'orders',
+  'orderItems',
+  'inventory',
+  'inventoryTransactions',
+  'payments',
+  'leads',
+  'campaigns',
+  'supportTickets',
+  'tasks',
+  'expenses',
+  'notifications',
+  'auditLogs',
+  'samples',
+  'telegramPendingActions',
+  'telegramProcessedUpdates'
+];
+
+const READ_ONLY_COLLECTIONS = [
+  'payments',
+  'inventoryTransactions',
+  'auditLogs',
+  'samples'
+];
+
 export async function getGenericCollection(req: Request, res: Response) {
   try {
-    const name = req.params.name as CollectionName;
-    const docs = await genericRepository.getAll(name);
+    const name = req.params.name;
+    if (!WHITELISTED_COLLECTIONS.includes(name)) {
+      return res.status(400).json({ success: false, error: `Invalid collection name: ${name}` });
+    }
+    const docs = await genericRepository.getAll(name as CollectionName);
     res.json({ success: true, collection: name, data: docs });
   } catch (err: any) {
     console.error(`[Firestore] getGenericCollection ${req.params.name} error:`, err);
@@ -114,8 +145,14 @@ export async function getGenericCollection(req: Request, res: Response) {
 
 export async function createGenericDoc(req: Request, res: Response) {
   try {
-    const name = req.params.name as CollectionName;
-    const doc = await genericRepository.create(name, req.body);
+    const name = req.params.name;
+    if (!WHITELISTED_COLLECTIONS.includes(name)) {
+      return res.status(400).json({ success: false, error: `Invalid collection name: ${name}` });
+    }
+    if (READ_ONLY_COLLECTIONS.includes(name)) {
+      return res.status(403).json({ success: false, error: `Writes to collection ${name} are prohibited via client API.` });
+    }
+    const doc = await genericRepository.create(name as CollectionName, req.body);
     res.json({ success: true, collection: name, data: doc });
   } catch (err: any) {
     console.error(`[Firestore] createGenericDoc ${req.params.name} error:`, err);

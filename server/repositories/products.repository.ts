@@ -1,4 +1,5 @@
 import { getCollectionRef, COLLECTIONS, prepareDataForInsert, prepareDataForUpdate } from '../firebase/firestore.js';
+import { randomUUID } from 'node:crypto';
 
 export interface ProductDoc {
   id: string;
@@ -22,7 +23,7 @@ export const productsRepository = {
     if (!data.name || data.salePrice == null) {
       throw new Error('Product name and sale price are required');
     }
-    const docId = data.id || `prod-${Date.now()}`;
+    const docId = data.id || `prod-${randomUUID()}`;
     const prepared = prepareDataForInsert({
       id: docId,
       name: data.name,

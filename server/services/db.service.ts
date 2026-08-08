@@ -8,15 +8,29 @@ export interface DatabaseHealth {
   customersCount: number;
   ordersCount: number;
   stocksCount: number;
+  latencyMs?: number;
+  warnings?: Array<{ quality: string; currentStock5L: number; message: string }>;
+  hasWarnings?: boolean;
   error?: string;
 }
 
 export const dbService = {
   getHealthStatus: async (): Promise<DatabaseHealth> => {
     try {
+      const startTime = performance.now();
       const customers = await customersRepository.getAll();
       const orders = await ordersRepository.getAll();
       const stocks = await inventoryRepository.getAll();
+      const endTime = performance.now();
+      const latencyMs = Math.round(endTime - startTime);
+
+      const lowStockWarnings = stocks
+        .filter(s => s.currentStock5L < 200)
+        .map(s => ({
+          quality: s.quality,
+          currentStock5L: s.currentStock5L,
+          message: `Warning: Inventory for ${s.quality} is low (${s.currentStock5L}L), below the 200L safety threshold.`
+        }));
 
       return {
         connected: true,
@@ -24,6 +38,9 @@ export const dbService = {
         customersCount: customers.length,
         ordersCount: orders.length,
         stocksCount: stocks.length,
+        latencyMs,
+        warnings: lowStockWarnings,
+        hasWarnings: lowStockWarnings.length > 0,
       };
     } catch (err: any) {
       console.error('[Firestore Health] Connection error:', err);
@@ -33,6 +50,9 @@ export const dbService = {
         customersCount: 0,
         ordersCount: 0,
         stocksCount: 0,
+        latencyMs: 0,
+        warnings: [],
+        hasWarnings: false,
         error: err.message,
       };
     }

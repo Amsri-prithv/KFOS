@@ -93,6 +93,12 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    // SAMPLES: Server-side Admin SDK only
+    match /samples/{id} {
+      allow read: if isSales();
+      allow write: if false;
+    }
+
     // LEADS & CAMPAIGNS: Sales/Admin write; others read
     match /leads/{id} {
       allow read: if isSignedIn();

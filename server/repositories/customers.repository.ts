@@ -1,4 +1,5 @@
 import { getCollectionRef, COLLECTIONS, prepareDataForInsert, prepareDataForUpdate, firestoreDb } from '../firebase/firestore.js';
+import { randomUUID } from 'node:crypto';
 
 export interface CustomerDoc {
   id: string;
@@ -37,7 +38,7 @@ export const customersRepository = {
     if (!data.phone || !data.phone.trim()) {
       throw new Error('Customer phone number is required');
     }
-    const docId = data.id || `cust-${Date.now()}`;
+    const docId = data.id || `cust-${randomUUID()}`;
     const prepared = prepareDataForInsert({
       id: docId,
       name: data.name.trim(),
@@ -70,7 +71,7 @@ export const customersRepository = {
       // Check Idempotency if key provided
       const paymentDocId = params.idempotencyKey
         ? `pay_${params.idempotencyKey}`
-        : `pay_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+        : `pay_${randomUUID()}`;
       const paymentRef = getCollectionRef(COLLECTIONS.PAYMENTS).doc(paymentDocId);
       const existingPaySnap = await tx.get(paymentRef);
 
@@ -113,7 +114,7 @@ export const customersRepository = {
       };
 
       const auditData = {
-        id: `audit_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+        id: `audit_${randomUUID()}`,
         timestamp: nowIso,
         type: 'Payment Recorded',
         title: `Payment Recorded - ₹${params.amount}`,
@@ -163,7 +164,7 @@ export const customersRepository = {
       }
 
       const newUsed = currentUsed + 1;
-      const sampleId = `sample_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+      const sampleId = `sample_${randomUUID()}`;
       const dateStr = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
       const nowIso = new Date().toISOString();
 
@@ -179,7 +180,7 @@ export const customersRepository = {
       };
 
       const auditData = {
-        id: `audit_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+        id: `audit_${randomUUID()}`,
         timestamp: nowIso,
         type: 'Sample Dispatched',
         title: `Free Sample Dispatched - ${customer.name}`,

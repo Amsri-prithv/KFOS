@@ -1,5 +1,6 @@
 import { getCollectionRef, COLLECTIONS, prepareDataForInsert, prepareDataForUpdate } from '../firebase/firestore.js';
 import { ExpenseRecord } from '../../src/types/kfos.js';
+import { randomUUID } from 'node:crypto';
 
 export interface ExpenseDoc extends ExpenseRecord {
   createdAt: string;
@@ -16,7 +17,7 @@ export const expensesRepository = {
     if (!data.title || data.amount == null) {
       throw new Error('Expense title and amount are required');
     }
-    const docId = data.id || `exp-${Date.now()}`;
+    const docId = data.id || `exp-${randomUUID()}`;
     const prepared = prepareDataForInsert({
       ...data,
       id: docId,

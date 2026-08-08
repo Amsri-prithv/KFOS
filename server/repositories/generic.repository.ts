@@ -1,4 +1,5 @@
 import { getCollectionRef, CollectionName, prepareDataForInsert, prepareDataForUpdate } from '../firebase/firestore.js';
+import { randomUUID } from 'node:crypto';
 
 export const genericRepository = {
   async getAll<T = any>(collectionName: CollectionName): Promise<T[]> {
@@ -13,7 +14,7 @@ export const genericRepository = {
   },
 
   async create<T extends Record<string, any>>(collectionName: CollectionName, data: T): Promise<T> {
-    const docId = data.id || `doc-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
+    const docId = data.id || `doc-${randomUUID()}`;
     const prepared = prepareDataForInsert({
       ...data,
       id: docId,

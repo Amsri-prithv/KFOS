@@ -38,10 +38,20 @@ app.use(express.json({ limit: '20mb' }));
 
 // Health Check API (Public)
 app.get('/api/health', (req, res) => {
+  const memoryUsage = process.memoryUsage();
   res.json({
     status: 'online',
     app: 'KFOS - Kashmeer Fragrances Operating System',
     timestamp: new Date().toISOString(),
+    uptime: process.uptime(),
+    nodeVersion: process.version,
+    pid: process.pid,
+    memory: {
+      rss: `${Math.round(memoryUsage.rss / 1024 / 1024)} MB`,
+      heapTotal: `${Math.round(memoryUsage.heapTotal / 1024 / 1024)} MB`,
+      heapUsed: `${Math.round(memoryUsage.heapUsed / 1024 / 1024)} MB`,
+      external: `${Math.round(memoryUsage.external / 1024 / 1024)} MB`,
+    },
   });
 });
 

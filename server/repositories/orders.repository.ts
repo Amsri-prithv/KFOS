@@ -1,5 +1,6 @@
 import { getCollectionRef, COLLECTIONS, prepareDataForInsert, prepareDataForUpdate, firestoreDb } from '../firebase/firestore.js';
 import { Order, PRICING_MATRIX, QualityGrade } from '../../src/types/kfos.js';
+import { randomUUID, randomInt } from 'node:crypto';
 
 export interface OrderDoc extends Order {
   createdAt: string;
@@ -45,29 +46,41 @@ export const ordersRepository = {
         throw new Error('Order must contain at least one product item');
       }
 
-      const docId = `ord-${Date.now()}`;
-      const orderNumber = `KF-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}`;
+      const docId = `ord-${randomUUID()}`;
+      const orderNumber = `KF-${new Date().getFullYear()}-${randomInt(100000, 1000000)}`;
+
+      // Aggregate stock needs per quality grade to avoid read-after-write/race condition overwrite
+      const qualityTotals = new Map<QualityGrade, number>();
+      for (const itemInput of data.items) {
+        const qty = itemInput.quantity;
+        if (qty <= 0) {
+          throw new Error('Quantity must be greater than 0');
+        }
+        const quality = itemInput.quality;
+        qualityTotals.set(quality, (qualityTotals.get(quality) || 0) + qty);
+      }
+
+      // Read stock first for all required quality grades
+      const stockSnapshots = new Map<QualityGrade, number>();
+      for (const [quality, neededQty] of qualityTotals.entries()) {
+        const stockRef = getCollectionRef(COLLECTIONS.INVENTORY).doc(quality);
+        const stockSnap = await tx.get(stockRef);
+        const currentStock = stockSnap.exists ? (stockSnap.data()?.currentStock5L || 0) : 0;
+        if (currentStock < neededQty) {
+          throw new Error(`Insufficient stock for ${quality}. Available: ${currentStock}, Requested: ${neededQty}`);
+        }
+        stockSnapshots.set(quality, currentStock);
+      }
 
       let orderTotalAmount = 0;
       let orderTotalDiscount = 0;
       let orderTotalProfit = 0;
       const processedItems: any[] = [];
 
-      // 2. Process items & enforce authoritative pricing & stock
+      // Process items and apply authoritive pricing
       for (const itemInput of data.items) {
         const quality = itemInput.quality;
         const qty = itemInput.quantity;
-        if (qty <= 0) {
-          throw new Error('Quantity must be greater than 0');
-        }
-
-        const stockRef = getCollectionRef(COLLECTIONS.INVENTORY).doc(quality);
-        const stockSnap = await tx.get(stockRef);
-        const currentStock = stockSnap.exists ? (stockSnap.data()?.currentStock5L || 0) : 0;
-        if (currentStock < qty) {
-          throw new Error(`Insufficient stock for ${quality}. Available: ${currentStock}, Required: ${qty}`);
-        }
-
         const pricing = PRICING_MATRIX[quality];
         if (!pricing) {
           throw new Error(`Invalid quality grade: ${quality}`);
@@ -89,8 +102,8 @@ export const ordersRepository = {
         orderTotalDiscount += discount * qty;
         orderTotalProfit += itemTotalProfit;
 
-        const itemId = `item-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
-        const processedItem = {
+        const itemId = `item-${randomUUID()}`;
+        processedItems.push({
           id: itemId,
           productVariant: itemInput.productVariant,
           quality,
@@ -103,23 +116,26 @@ export const ordersRepository = {
           totalProfit: itemTotalProfit,
           orderId: docId,
           customerId: data.customerId,
-        };
-        processedItems.push(processedItem);
+        });
+      }
 
-        // Deduct inventory stock
-        const newStock = currentStock - qty;
+      // Deduct inventory stock and create inventory transactions
+      for (const [quality, currentStock] of stockSnapshots.entries()) {
+        const neededQty = qualityTotals.get(quality)!;
+        const newStock = currentStock - neededQty;
+        const stockRef = getCollectionRef(COLLECTIONS.INVENTORY).doc(quality);
+        
         tx.update(stockRef, prepareDataForUpdate({
           currentStock5L: newStock,
         }));
 
-        // Log inventory transaction with delta quantity
-        const txId = `tx-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
+        const txId = `tx-${randomUUID()}`;
         const txRef = getCollectionRef(COLLECTIONS.INVENTORY_TRANSACTIONS).doc(txId);
         tx.set(txRef, prepareDataForInsert({
           id: txId,
           qualityGrade: quality,
           type: 'DEDUCTION',
-          deltaQuantity5L: -qty,
+          deltaQuantity5L: -neededQty,
           newStockLevel5L: newStock,
           reason: `Order ${orderNumber}`,
           orderId: docId,
@@ -169,7 +185,7 @@ export const ordersRepository = {
       tx.update(custRef, updatedCustomer);
 
       // Log audit event
-      const auditId = `evt-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
+      const auditId = `evt-${randomUUID()}`;
       const auditRef = getCollectionRef(COLLECTIONS.AUDIT_LOGS).doc(auditId);
       tx.set(auditRef, prepareDataForInsert({
         id: auditId,
@@ -202,7 +218,7 @@ export const ordersRepository = {
         notes: data.notes,
       });
     }
-    const docId = data.id || `ord-${Date.now()}`;
+    const docId = data.id || `ord-${randomUUID()}`;
     const prepared = prepareDataForInsert({ ...data, id: docId });
     await getCollectionRef(COLLECTIONS.ORDERS).doc(docId).set(prepared);
     return prepared;
