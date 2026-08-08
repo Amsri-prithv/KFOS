@@ -80,34 +80,75 @@ const nluSchema: Schema = {
   required: ['intent', 'confidence'],
 };
 
-// Quick Rule-Based Fallback Parser (used when Gemini API hits 429 rate limit)
+// Quick Rule-Based Fallback Parser (used when Gemini API hits 429 rate limit or missing API key)
 function fallbackRuleBasedParse(text: string): NluParseResult {
-  const lower = text.toLowerCase();
+  const lower = text.toLowerCase().trim();
+
+  if (!lower || lower === 'hi' || lower === 'hello' || lower === 'hey') {
+    return {
+      intent: 'UNKNOWN',
+      confidence: 0.3,
+      needsClarification: true,
+      clarificationQuestion: '👋 Hello! How can I help you today? Please specify customer name and order details (e.g., "Ramesh ku 5 Standard cans venum").',
+    };
+  }
 
   // Stock query
   if (lower.includes('stock') || lower.includes('evlo stock') || lower.includes('iruku')) {
-    return { intent: 'CHECK_STOCK', confidence: 0.85 };
+    return { intent: 'CHECK_STOCK', confidence: 0.9 };
   }
 
   // Sales / Profit query
   if (lower.includes('sales') || lower.includes('revenue') || lower.includes('profit')) {
-    return { intent: 'CHECK_SALES', confidence: 0.85 };
+    return { intent: 'CHECK_SALES', confidence: 0.9 };
   }
 
   // Last order query
   if (lower.includes('last order') || lower.includes('recent order') || lower.includes('order details')) {
-    return { intent: 'CHECK_ORDER', confidence: 0.85 };
+    return { intent: 'CHECK_ORDER', confidence: 0.9 };
   }
 
   // Payment recording
   if (lower.includes('payment') || lower.includes('paid') || lower.includes('pannitaaru') || lower.includes('pay')) {
     const numbers = lower.match(/\d+/g);
     const amount = numbers ? parseInt(numbers[0], 10) : undefined;
-    const words = text.split(' ');
-    const customerName = words[0] && !['payment', 'paid'].includes(words[0].toLowerCase()) ? words[0] : 'Ramesh';
+    
+    // Extract customer name: first word if not keyword
+    const words = text.trim().split(/\s+/);
+    const firstWord = words[0];
+    const stopWords = ['payment', 'paid', 'pay', 'pannitaaru', 'rs', 'rupees', 'i', 'the'];
+    const customerName = firstWord && !stopWords.includes(firstWord.toLowerCase()) ? firstWord : undefined;
+
+    if (!customerName && !amount) {
+      return {
+        intent: 'RECORD_PAYMENT',
+        confidence: 0.5,
+        needsClarification: true,
+        clarificationQuestion: 'Endha customer evlo amount payment pannitaaru? Please specify customer and amount (e.g. "Ramesh payment 2000").',
+      };
+    }
+    if (!customerName) {
+      return {
+        intent: 'RECORD_PAYMENT',
+        paymentAmount: amount,
+        confidence: 0.6,
+        needsClarification: true,
+        clarificationQuestion: 'Endha customer payment pannitaaru? Please specify the customer name.',
+      };
+    }
+    if (!amount) {
+      return {
+        intent: 'RECORD_PAYMENT',
+        customerName,
+        confidence: 0.6,
+        needsClarification: true,
+        clarificationQuestion: `Evlo amount ${customerName} payment pannitaaru? Please specify payment amount.`,
+      };
+    }
+
     return {
       intent: 'RECORD_PAYMENT',
-      confidence: 0.8,
+      confidence: 0.85,
       customerName,
       paymentAmount: amount,
     };
@@ -122,19 +163,65 @@ function fallbackRuleBasedParse(text: string): NluParseResult {
     lower.includes('box')
   ) {
     const numbers = lower.match(/\d+/g);
-    const qty = numbers ? parseInt(numbers[0], 10) : 5;
-    let grade: 'Eco' | 'Standard' | 'Premium' = 'Standard';
+    const qty = numbers ? parseInt(numbers[0], 10) : undefined;
+    let grade: 'Eco' | 'Standard' | 'Premium' | undefined = undefined;
     if (lower.includes('eco')) grade = 'Eco';
+    if (lower.includes('standard')) grade = 'Standard';
     if (lower.includes('premium')) grade = 'Premium';
 
-    const words = text.split(' ');
-    const customerName = words[0] && !['order', '5', 'cans', 'eco', 'standard', 'premium'].includes(words[0].toLowerCase())
-      ? words[0]
-      : 'Ramesh';
+    const words = text.trim().split(/\s+/);
+    const firstWord = words[0];
+    const stopWords = ['order', 'can', 'cans', 'eco', 'standard', 'premium', 'venum', 'need', 'give', 'i', 'a', 'the', 'hi', 'hello'];
+    const customerName = firstWord && !stopWords.includes(firstWord.toLowerCase()) && isNaN(Number(firstWord))
+      ? firstWord
+      : undefined;
+
+    if (!customerName) {
+      return {
+        intent: 'CREATE_ORDER',
+        qualityGrade: grade,
+        quantityCans: qty,
+        confidence: 0.5,
+        needsClarification: true,
+        clarificationQuestion: 'Endha customer name ku order create pannanam? Please specify customer name.',
+      };
+    }
+
+    if (!qty && !grade) {
+      return {
+        intent: 'CREATE_ORDER',
+        customerName,
+        confidence: 0.6,
+        needsClarification: true,
+        clarificationQuestion: `Evlo cans venum? Eco, Standard, illa Premium grade? (e.g., "${customerName} ku 5 Standard cans venum").`,
+      };
+    }
+
+    if (!grade) {
+      return {
+        intent: 'CREATE_ORDER',
+        customerName,
+        quantityCans: qty,
+        confidence: 0.6,
+        needsClarification: true,
+        clarificationQuestion: `Endha grade venum? Eco, Standard, illa Premium?`,
+      };
+    }
+
+    if (!qty) {
+      return {
+        intent: 'CREATE_ORDER',
+        customerName,
+        qualityGrade: grade,
+        confidence: 0.6,
+        needsClarification: true,
+        clarificationQuestion: `Evlo ${grade} cans venum? Please specify quantity.`,
+      };
+    }
 
     return {
       intent: 'CREATE_ORDER',
-      confidence: 0.8,
+      confidence: 0.85,
       customerName,
       qualityGrade: grade,
       quantityCans: qty,
@@ -144,10 +231,19 @@ function fallbackRuleBasedParse(text: string): NluParseResult {
   // Expense
   if (lower.includes('expense') || lower.includes('petrol') || lower.includes('tea') || lower.includes('diesel')) {
     const numbers = lower.match(/\d+/g);
-    const amount = numbers ? parseInt(numbers[0], 10) : 200;
+    const amount = numbers ? parseInt(numbers[0], 10) : undefined;
+    if (!amount) {
+      return {
+        intent: 'RECORD_EXPENSE',
+        expenseReason: text,
+        confidence: 0.6,
+        needsClarification: true,
+        clarificationQuestion: 'Evlo amount expense aachu? Please specify the expense amount.',
+      };
+    }
     return {
       intent: 'RECORD_EXPENSE',
-      confidence: 0.8,
+      confidence: 0.85,
       expenseAmount: amount,
       expenseReason: text,
     };
@@ -158,7 +254,7 @@ function fallbackRuleBasedParse(text: string): NluParseResult {
     intent: 'UNKNOWN',
     confidence: 0.3,
     needsClarification: true,
-    clarificationQuestion: 'Could you please specify customer name, quantity, and grade?',
+    clarificationQuestion: 'I could not understand the request clearly. Please clarify customer name and order details (e.g., "Ramesh ku 5 Standard cans venum").',
   };
 }
 
@@ -198,7 +294,11 @@ Your job is to identify the intent and extract structured parameters:
 - CHECK_CUSTOMER / CHECK_OUTSTANDING: Outstanding balance query (e.g., "Ramesh balance evlo?").
 - CHECK_ORDER: Recent order query (e.g., "Last order details kudu").
 - RECORD_EXPENSE: Travel/food/field expense (e.g., "Petrol expense 300"). Extract expenseAmount, expenseReason.
-- UNKNOWN: Ambiguous message or missing details. Set needsClarification=true and provide clarificationQuestion in Tanglish/English.
+- UNKNOWN: Ambiguous message or missing details.
+
+CRITICAL INSTRUCTION:
+DO NOT guess or invent missing values. If customerName, quantityCans, qualityGrade, or paymentAmount are not explicitly provided or implied in the input, leave them undefined.
+If essential parameters are missing for an intent (e.g., missing customer or quantity for order), set needsClarification=true and provide a friendly clarificationQuestion in Tanglish or English.
 `;
 
   const contents: any[] = [];

@@ -1,81 +1,142 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // E2E verification collection
-    match /_systemTests/{testId} {
-      allow read, write: if true;
-    }
-
-    // Default rule: deny unauthenticated access
+    // Default rule: deny all access
     match /{document=**} {
       allow read, write: if false;
     }
 
-    // App collections
-    match /customers/{id} {
-      allow read, write: if request.auth != null;
+    // Role helper functions
+    function isSignedIn() {
+      return request.auth != null;
     }
 
+    function getRole() {
+      return request.auth.token.role;
+    }
+
+    function isFounderOrAdmin() {
+      return isSignedIn() && (getRole() == 'Founder' || getRole() == 'Admin');
+    }
+
+    function isSales() {
+      return isSignedIn() && (getRole() == 'Sales' || isFounderOrAdmin());
+    }
+
+    function isOps() {
+      return isSignedIn() && (getRole() == 'Operations' || isFounderOrAdmin());
+    }
+
+    function isFinance() {
+      return isSignedIn() && (getRole() == 'Finance' || isFounderOrAdmin());
+    }
+
+    function isSupport() {
+      return isSignedIn() && (getRole() == 'Support' || isFounderOrAdmin());
+    }
+
+    // System E2E test collection - restricted to Founder/Admin
+    match /_systemTests/{testId} {
+      allow read, write: if isFounderOrAdmin();
+    }
+
+    // CUSTOMERS: Founder/Admin/Sales write; Support & others read
+    match /customers/{id} {
+      allow read: if isSignedIn();
+      allow write: if isSales();
+    }
+
+    // PRODUCTS & VARIANTS: Founder/Admin write; authenticated read
     match /products/{id} {
-      allow read: if request.auth != null;
-      allow write: if request.auth != null && (request.auth.token.role == 'Founder' || request.auth.token.role == 'Admin');
+      allow read: if isSignedIn();
+      allow write: if isFounderOrAdmin();
     }
 
     match /productVariants/{id} {
-      allow read: if request.auth != null;
-      allow write: if request.auth != null && (request.auth.token.role == 'Founder' || request.auth.token.role == 'Admin');
+      allow read: if isSignedIn();
+      allow write: if isFounderOrAdmin();
     }
 
+    // ORDERS: Founder/Admin/Sales create/read/write; Operations read
     match /orders/{id} {
-      allow read, write: if request.auth != null;
+      allow read: if isSignedIn();
+      allow write: if isSales();
     }
 
+    // ORDER ITEMS: Trusted server-side writes only
     match /orderItems/{id} {
-      allow read, write: if request.auth != null;
+      allow read: if isSignedIn();
+      allow write: if false;
     }
 
+    // INVENTORY: Founder/Admin/Operations write; others read
     match /inventory/{id} {
-      allow read, write: if request.auth != null;
+      allow read: if isSignedIn();
+      allow write: if isOps();
     }
 
+    // INVENTORY TRANSACTIONS: Server-side append only
     match /inventoryTransactions/{id} {
-      allow read: if request.auth != null;
-      allow create: if request.auth != null;
+      allow read: if isSignedIn();
+      allow create: if isOps();
       allow update, delete: if false;
     }
 
+    // PAYMENTS: Founder/Admin/Finance create/update/read
     match /payments/{id} {
-      allow read, write: if request.auth != null;
+      allow read: if isSignedIn();
+      allow write: if isFinance();
     }
 
+    // EXPENSES: Founder/Admin/Finance create/update/read
+    match /expenses/{id} {
+      allow read: if isSignedIn();
+      allow write: if isFinance();
+    }
+
+    // LEADS & CAMPAIGNS: Sales/Admin write; others read
     match /leads/{id} {
-      allow read, write: if request.auth != null;
+      allow read: if isSignedIn();
+      allow write: if isSales();
     }
 
     match /campaigns/{id} {
-      allow read, write: if request.auth != null;
+      allow read: if isSignedIn();
+      allow write: if isSales();
     }
 
+    // SUPPORT TICKETS: Support/Admin write; Sales create/read
     match /supportTickets/{id} {
-      allow read, write: if request.auth != null;
+      allow read: if isSignedIn();
+      allow create: if isSales() || isSupport();
+      allow update, delete: if isSupport();
     }
 
+    // TASKS: Authenticated role-aware access
     match /tasks/{id} {
-      allow read, write: if request.auth != null;
+      allow read, write: if isSignedIn();
     }
 
-    match /expenses/{id} {
-      allow read, write: if request.auth != null;
-    }
-
+    // NOTIFICATIONS: Authenticated access
     match /notifications/{id} {
-      allow read, write: if request.auth != null;
+      allow read, write: if isSignedIn();
     }
 
+    // AUDIT LOGS: Founder/Admin read; append only
     match /auditLogs/{id} {
-      allow read: if request.auth != null && (request.auth.token.role == 'Founder' || request.auth.token.role == 'Admin');
-      allow create: if request.auth != null;
+      allow read: if isFounderOrAdmin();
+      allow create: if isSignedIn();
       allow update, delete: if false;
+    }
+
+    // Telegram backend collections (Server-only via Admin SDK)
+    match /telegramProcessedUpdates/{id} {
+      allow read, write: if false;
+    }
+
+    match /telegramPendingActions/{id} {
+      allow read, write: if false;
     }
   }
 }
+

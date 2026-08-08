@@ -924,8 +924,8 @@ class KFOSStore {
     const totalRevenue = activeOrders.reduce((sum, o) => sum + o.totalAmount, 0);
     const totalProfit = activeOrders.reduce((sum, o) => sum + o.totalProfit, 0);
 
-    // Today's Date String
-    const todayISO = new Date().toISOString().split('T')[0];
+    // Today's Date String (Asia/Kolkata)
+    const todayISO = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
     const todayOrders = activeOrders.filter((o) => o.orderDate.startsWith(todayISO));
     const todayProfit = todayOrders.reduce((sum, o) => sum + o.totalProfit, 0);
     const todayRevenue = todayOrders.reduce((sum, o) => sum + o.totalAmount, 0);
