@@ -1,3 +1,4 @@
+import { describe, it, expect } from 'vitest';
 import { processTelegramUpdate } from '../services/telegram.service.js';
 import { parseNluInput } from '../services/nlu.service.js';
 import { customersRepository } from '../repositories/customers.repository.js';
@@ -31,10 +32,27 @@ export async function runTelegramTestSuite() {
   if (res1Dup.duplicate !== true) throw new Error('Duplicate protection failed');
 
   // Restock inventory for tests
-  console.log('\n--- Restocking Inventory for Test Suite ---');
+  console.log('\n--- Restocking Inventory & Seeding Ramesh for Test Suite ---');
   await inventoryRepository.updateStockAtomic('Standard', 50, 'RESTOCK', 'Initial test stock');
   await inventoryRepository.updateStockAtomic('Eco', 50, 'RESTOCK', 'Initial test stock');
   await inventoryRepository.updateStockAtomic('Premium', 50, 'RESTOCK', 'Initial test stock');
+
+  // Seed Ramesh customer cleanly
+  const allCustomers = await customersRepository.getAll();
+  const rameshList = allCustomers.filter((c) => c.name.trim().toLowerCase() === 'ramesh');
+  let rameshCust = rameshList[0];
+  if (!rameshCust) {
+    rameshCust = await customersRepository.create({
+      name: 'Ramesh',
+      place: 'Trichy Main Road',
+      phone: '+91 98765 43210',
+      outstandingBalance: 1500,
+      free200mlSamplesUsed: 0,
+      totalOrdersCount: 2,
+      totalSpent: 12000,
+      isArchived: false,
+    });
+  }
 
   // 2. Stock Query (/stock command & Natural Language)
   console.log('\n--- 2. Testing Stock Query ---');
@@ -176,7 +194,6 @@ export async function runTelegramTestSuite() {
 
   // 9. Voice Message Processing
   console.log('\n--- 9. Testing Voice Message Processing ---');
-  // Generate mock audio base64 or call NLU directly
   const voiceNlu = await parseNluInput({
     text: 'Audio voice note: Ramesh ku 3 Premium cans order',
   });
@@ -187,9 +204,9 @@ export async function runTelegramTestSuite() {
   console.log('====================================================\n');
 }
 
-if (process.argv[1]?.endsWith('telegram.test.ts')) {
-  runTelegramTestSuite().catch(err => {
-    console.error('Test Suite Error:', err);
-    process.exit(1);
-  });
-}
+describe('Telegram Bot & NLU Automation Suite', () => {
+  it('executes full telegram bot flow and assertions', async () => {
+    await runTelegramTestSuite();
+  }, 30000);
+});
+

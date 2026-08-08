@@ -5,21 +5,18 @@ import {
   SampleDistribution,
   LiquidStockPool,
   PaymentRecord,
+  ExpenseRecord,
   ReturnRecord,
   TimelineEvent,
   QualityGrade,
   ProductVariant,
   PRICING_MATRIX,
+  Lead,
+  Campaign,
+  SupportTicket,
+  TaskItem,
+  NotificationItem,
 } from '../types/kfos';
-import {
-  SEED_CUSTOMERS,
-  SEED_STOCKS,
-  SEED_ORDERS,
-  SEED_SAMPLES,
-  SEED_PAYMENTS,
-  SEED_RETURNS,
-  SEED_TIMELINE,
-} from '../../scripts/seed-dev';
 
 class KFOSStore {
   private customers: Customer[] = [];
@@ -31,6 +28,13 @@ class KFOSStore {
   ];
   private samples: SampleDistribution[] = [];
   private payments: PaymentRecord[] = [];
+  private expenses: ExpenseRecord[] = [];
+  private leads: Lead[] = [];
+  private campaigns: Campaign[] = [];
+  private supportTickets: SupportTicket[] = [];
+  private tasks: TaskItem[] = [];
+  private notifications: NotificationItem[] = [];
+  private telegramActivities: any[] = [];
   private returns: ReturnRecord[] = [];
   private timeline: TimelineEvent[] = [];
   private listeners: (() => void)[] = [];
@@ -60,31 +64,73 @@ class KFOSStore {
       const headers = await this.getAuthHeaders();
 
       // Fetch customers from Firestore
-      const custRes = await fetch('/api/firestore/customers', { headers }).then((r) => r.json());
+      const custRes = await fetch('/api/firestore/customers', { headers }).then((r) => r.json()).catch(() => ({}));
       if (custRes.success && Array.isArray(custRes.data)) {
         this.customers = custRes.data;
       }
 
       // Fetch orders from Firestore
-      const ordRes = await fetch('/api/firestore/orders', { headers }).then((r) => r.json());
+      const ordRes = await fetch('/api/firestore/orders', { headers }).then((r) => r.json()).catch(() => ({}));
       if (ordRes.success && Array.isArray(ordRes.data)) {
         this.orders = ordRes.data;
       }
 
       // Fetch inventory from Firestore
-      const invRes = await fetch('/api/firestore/inventory', { headers }).then((r) => r.json());
+      const invRes = await fetch('/api/firestore/inventory', { headers }).then((r) => r.json()).catch(() => ({}));
       if (invRes.success && Array.isArray(invRes.data) && invRes.data.length > 0) {
         this.stocks = invRes.data;
       }
 
+      // Fetch expenses from Firestore
+      const expRes = await fetch('/api/firestore/expenses', { headers }).then((r) => r.json()).catch(() => ({}));
+      if (expRes.success && Array.isArray(expRes.data)) {
+        this.expenses = expRes.data;
+      }
+
       // Fetch payments
-      const payRes = await fetch('/api/firestore/collection/payments', { headers }).then((r) => r.json());
+      const payRes = await fetch('/api/firestore/collection/payments', { headers }).then((r) => r.json()).catch(() => ({}));
       if (payRes.success && Array.isArray(payRes.data)) {
         this.payments = payRes.data;
       }
 
+      // Fetch leads
+      const leadRes = await fetch('/api/firestore/collection/leads', { headers }).then((r) => r.json()).catch(() => ({}));
+      if (leadRes.success && Array.isArray(leadRes.data)) {
+        this.leads = leadRes.data;
+      }
+
+      // Fetch campaigns
+      const campRes = await fetch('/api/firestore/collection/campaigns', { headers }).then((r) => r.json()).catch(() => ({}));
+      if (campRes.success && Array.isArray(campRes.data)) {
+        this.campaigns = campRes.data;
+      }
+
+      // Fetch support tickets
+      const ticketRes = await fetch('/api/firestore/collection/supportTickets', { headers }).then((r) => r.json()).catch(() => ({}));
+      if (ticketRes.success && Array.isArray(ticketRes.data)) {
+        this.supportTickets = ticketRes.data;
+      }
+
+      // Fetch tasks
+      const taskRes = await fetch('/api/firestore/collection/tasks', { headers }).then((r) => r.json()).catch(() => ({}));
+      if (taskRes.success && Array.isArray(taskRes.data)) {
+        this.tasks = taskRes.data;
+      }
+
+      // Fetch notifications
+      const notifRes = await fetch('/api/firestore/collection/notifications', { headers }).then((r) => r.json()).catch(() => ({}));
+      if (notifRes.success && Array.isArray(notifRes.data)) {
+        this.notifications = notifRes.data;
+      }
+
+      // Fetch telegram pending actions / updates
+      const tgRes = await fetch('/api/firestore/collection/telegramProcessedUpdates', { headers }).then((r) => r.json()).catch(() => ({}));
+      if (tgRes.success && Array.isArray(tgRes.data)) {
+        this.telegramActivities = tgRes.data;
+      }
+
       // Fetch audit logs / timeline
-      const auditRes = await fetch('/api/firestore/collection/auditLogs', { headers }).then((r) => r.json());
+      const auditRes = await fetch('/api/firestore/collection/auditLogs', { headers }).then((r) => r.json()).catch(() => ({}));
       if (auditRes.success && Array.isArray(auditRes.data)) {
         this.timeline = auditRes.data;
       }
@@ -151,6 +197,194 @@ class KFOSStore {
 
   public getOrders(includeArchived = false): Order[] {
     return includeArchived ? this.orders : this.orders.filter((o) => !o.isArchived);
+  }
+
+  public getExpenses(): ExpenseRecord[] {
+    return this.expenses;
+  }
+
+  public getLeads(): Lead[] {
+    return this.leads;
+  }
+
+  public getCampaigns(): Campaign[] {
+    return this.campaigns;
+  }
+
+  public getSupportTickets(): SupportTicket[] {
+    return this.supportTickets;
+  }
+
+  public getTasks(): TaskItem[] {
+    return this.tasks;
+  }
+
+  public getNotifications(): NotificationItem[] {
+    return this.notifications;
+  }
+
+  public getTelegramActivities(): any[] {
+    return this.telegramActivities;
+  }
+
+  public async addExpense(expense: Omit<ExpenseRecord, 'id'>): Promise<{ success: boolean; data?: ExpenseRecord; error?: string }> {
+    const newDoc: ExpenseRecord = {
+      ...expense,
+      id: 'exp-' + Date.now(),
+    };
+    this.expenses.unshift(newDoc);
+    this.notify();
+    try {
+      const headers = await this.getAuthHeaders();
+      const res = await fetch('/api/firestore/expenses', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(newDoc),
+      }).then((r) => r.json());
+      if (res.success) {
+        return { success: true, data: newDoc };
+      }
+      return { success: false, error: res.error || 'Failed to create expense' };
+    } catch (e: any) {
+      return { success: false, error: e.message || 'Expense creation error' };
+    }
+  }
+
+  public async addLead(lead: Omit<Lead, 'id' | 'createdAt'>): Promise<{ success: boolean; data?: Lead; error?: string }> {
+    const newDoc: Lead = {
+      ...lead,
+      id: 'lead-' + Date.now(),
+      createdAt: new Date().toISOString(),
+    };
+    this.leads.unshift(newDoc);
+    this.notify();
+    try {
+      const headers = await this.getAuthHeaders();
+      const res = await fetch('/api/firestore/collection/leads', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(newDoc),
+      }).then((r) => r.json());
+      return { success: res.success, data: newDoc, error: res.error };
+    } catch (e: any) {
+      return { success: false, error: e.message };
+    }
+  }
+
+  public async updateLeadStatus(id: string, status: Lead['status']): Promise<boolean> {
+    const item = this.leads.find((l) => l.id === id);
+    if (!item) return false;
+    item.status = status;
+    this.notify();
+    try {
+      const headers = await this.getAuthHeaders();
+      await fetch('/api/firestore/collection/leads', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(item),
+      });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  public async addCampaign(campaign: Omit<Campaign, 'id'>): Promise<{ success: boolean; data?: Campaign; error?: string }> {
+    const newDoc: Campaign = {
+      ...campaign,
+      id: 'camp-' + Date.now(),
+    };
+    this.campaigns.unshift(newDoc);
+    this.notify();
+    try {
+      const headers = await this.getAuthHeaders();
+      const res = await fetch('/api/firestore/collection/campaigns', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(newDoc),
+      }).then((r) => r.json());
+      return { success: res.success, data: newDoc, error: res.error };
+    } catch (e: any) {
+      return { success: false, error: e.message };
+    }
+  }
+
+  public async addSupportTicket(ticket: Omit<SupportTicket, 'id' | 'ticketNumber' | 'createdAt'>): Promise<{ success: boolean; data?: SupportTicket; error?: string }> {
+    const newDoc: SupportTicket = {
+      ...ticket,
+      id: 'tick-' + Date.now(),
+      ticketNumber: 'TICK-' + Math.floor(1000 + Math.random() * 9000),
+      createdAt: new Date().toISOString(),
+    };
+    this.supportTickets.unshift(newDoc);
+    this.notify();
+    try {
+      const headers = await this.getAuthHeaders();
+      const res = await fetch('/api/firestore/collection/supportTickets', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(newDoc),
+      }).then((r) => r.json());
+      return { success: res.success, data: newDoc, error: res.error };
+    } catch (e: any) {
+      return { success: false, error: e.message };
+    }
+  }
+
+  public async updateSupportTicketStatus(id: string, status: SupportTicket['status']): Promise<boolean> {
+    const item = this.supportTickets.find((t) => t.id === id);
+    if (!item) return false;
+    item.status = status;
+    this.notify();
+    try {
+      const headers = await this.getAuthHeaders();
+      await fetch('/api/firestore/collection/supportTickets', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(item),
+      });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  public async addTask(task: Omit<TaskItem, 'id'>): Promise<{ success: boolean; data?: TaskItem; error?: string }> {
+    const newDoc: TaskItem = {
+      ...task,
+      id: 'task-' + Date.now(),
+    };
+    this.tasks.unshift(newDoc);
+    this.notify();
+    try {
+      const headers = await this.getAuthHeaders();
+      const res = await fetch('/api/firestore/collection/tasks', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(newDoc),
+      }).then((r) => r.json());
+      return { success: res.success, data: newDoc, error: res.error };
+    } catch (e: any) {
+      return { success: false, error: e.message };
+    }
+  }
+
+  public async updateTaskStatus(id: string, status: TaskItem['status']): Promise<boolean> {
+    const item = this.tasks.find((t) => t.id === id);
+    if (!item) return false;
+    item.status = status;
+    this.notify();
+    try {
+      const headers = await this.getAuthHeaders();
+      await fetch('/api/firestore/collection/tasks', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(item),
+      });
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   public getLiquidStocks(): LiquidStockPool[] {
@@ -731,18 +965,34 @@ class KFOSStore {
     const totalRevenue = activeOrders.reduce((sum, o) => sum + o.totalAmount, 0);
     const totalProfit = activeOrders.reduce((sum, o) => sum + o.totalProfit, 0);
 
-    // Today's Date String (Asia/Kolkata)
+    // Today's Date String in Asia/Kolkata timezone
     const todayISO = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
-    const todayOrders = activeOrders.filter((o) => o.orderDate.startsWith(todayISO));
+    const todayOrders = activeOrders.filter((o) => {
+      const dateStr = new Date(o.orderDate).toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
+      return dateStr === todayISO;
+    });
     const todayProfit = todayOrders.reduce((sum, o) => sum + o.totalProfit, 0);
     const todayRevenue = todayOrders.reduce((sum, o) => sum + o.totalAmount, 0);
 
-    const totalOutstanding = this.getCustomers().reduce((sum, c) => sum + c.outstandingBalance, 0);
+    const totalOutstanding = this.getCustomers().reduce((sum, c) => sum + (c.outstandingBalance || 0), 0);
     const totalCustomers = this.getCustomers().length;
+
+    const stockMap = {
+      Eco: this.stocks.find((s) => s.quality === 'Eco')?.currentStock5L || 0,
+      Standard: this.stocks.find((s) => s.quality === 'Standard')?.currentStock5L || 0,
+      Premium: this.stocks.find((s) => s.quality === 'Premium')?.currentStock5L || 0,
+    };
 
     const lowStockAlerts = this.stocks.filter((s) => s.currentStock5L <= s.lowStockThreshold);
 
+    const pendingOrdersCount = activeOrders.filter((o) => o.paymentStatus !== 'Paid').length;
     const pendingFollowUps = this.samples.filter((s) => s.followUpStatus === 'Pending');
+    const openLeadsCount = this.leads.filter((l) => l.status !== 'Converted' && l.status !== 'Lost').length;
+    const openTicketsCount = this.supportTickets.filter((t) => t.status !== 'Closed' && t.status !== 'Resolved').length;
+    const pendingTasksCount = this.tasks.filter((t) => t.status !== 'Completed').length;
+
+    const totalExpenses = this.expenses.reduce((sum, e) => sum + (e.amount || 0), 0);
+    const netRealizedProfit = Math.max(0, totalProfit - totalExpenses);
 
     return {
       totalRevenue,
@@ -752,8 +1002,15 @@ class KFOSStore {
       todayOrdersCount: todayOrders.length,
       totalOutstanding,
       totalCustomers,
+      stockMap,
       lowStockAlerts,
+      pendingOrdersCount,
       pendingFollowUpsCount: pendingFollowUps.length,
+      openLeadsCount,
+      openTicketsCount,
+      pendingTasksCount,
+      totalExpenses,
+      netRealizedProfit,
     };
   }
 }

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   IndianRupee,
   Receipt,
@@ -33,25 +33,14 @@ export const FinanceLedger: React.FC<FinanceLedgerProps> = ({
   const [paymentMethod, setPaymentMethod] = useState<'Cash' | 'UPI' | 'Bank Transfer'>('UPI');
   const [paymentNotes, setPaymentNotes] = useState('');
 
-  // New expense state
-  const [expenses, setExpenses] = useState<ExpenseRecord[]>([
-    {
-      id: 'exp_1',
-      title: 'Trichy Route Diesel Fuel',
-      category: 'Fuel & Field Travel',
-      amount: 1800,
-      date: new Date().toISOString().split('T')[0],
-      loggedBy: 'Field Rep - Ramesh',
-    },
-    {
-      id: 'exp_2',
-      title: '5L HDPE Cans Batch Purchase (500 Cans)',
-      category: 'Packaging & Cans',
-      amount: 22500,
-      date: new Date(Date.now() - 86400000 * 2).toISOString().split('T')[0],
-      loggedBy: 'Ops Manager',
-    },
-  ]);
+  // Expenses state connected to store
+  const [expenses, setExpenses] = useState<ExpenseRecord[]>(kfosStore.getExpenses());
+
+  useEffect(() => {
+    const update = () => setExpenses(kfosStore.getExpenses());
+    update();
+    return kfosStore.subscribe(update);
+  }, []);
 
   const [newExpenseTitle, setNewExpenseTitle] = useState('');
   const [newExpenseAmount, setNewExpenseAmount] = useState<number>(0);
@@ -59,11 +48,11 @@ export const FinanceLedger: React.FC<FinanceLedgerProps> = ({
 
   const customersWithCredit = customers.filter((c) => c.outstandingBalance > 0);
   const totalReceivables = customers.reduce((sum, c) => sum + c.outstandingBalance, 0);
-  const totalExpenses = expenses.reduce((sum, e) => sum + e.amount, 0);
+  const totalExpenses = expenses.reduce((sum, e) => sum + (e.amount || 0), 0);
   const totalRealizedProfit = orders.reduce((sum, o) => sum + (o.isReturned ? 0 : o.totalProfit), 0);
-  const netOperatingProfit = totalRealizedProfit - totalExpenses;
+  const netOperatingProfit = Math.max(0, totalRealizedProfit - totalExpenses);
 
-  const handleRecordPaymentSubmit = (e: React.FormEvent) => {
+  const handleRecordPaymentSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedCustomer || paymentAmount <= 0) return;
 
@@ -73,27 +62,25 @@ export const FinanceLedger: React.FC<FinanceLedgerProps> = ({
     );
     const targetOrderId = customerOrders[0]?.id || 'ord_direct';
 
-    kfosStore.recordPayment(targetOrderId, selectedCustomer.id, paymentAmount, paymentMethod, paymentNotes);
+    await kfosStore.recordPayment(targetOrderId, selectedCustomer.id, paymentAmount, paymentMethod, paymentNotes);
     setSelectedCustomer(null);
     setPaymentAmount(0);
     setPaymentNotes('');
     if (onPaymentRecorded) onPaymentRecorded();
   };
 
-  const handleAddExpense = (e: React.FormEvent) => {
+  const handleAddExpense = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newExpenseTitle || newExpenseAmount <= 0) return;
 
-    const newExp: ExpenseRecord = {
-      id: `exp_${Date.now()}`,
+    await kfosStore.addExpense({
       title: newExpenseTitle,
       category: newExpenseCategory,
       amount: newExpenseAmount,
-      date: new Date().toISOString().split('T')[0],
+      date: new Date().toISOString(),
       loggedBy: 'Admin',
-    };
+    });
 
-    setExpenses([newExp, ...expenses]);
     setNewExpenseTitle('');
     setNewExpenseAmount(0);
   };

@@ -212,6 +212,31 @@ export const CustomerDirectory: React.FC<CustomerDirectoryProps> = ({
               </button>
             </div>
 
+            {/* Financial Status & Record Payment */}
+            <div className="p-4 rounded-xl bg-zinc-900 border border-zinc-800 space-y-3 font-mono">
+              <div className="flex justify-between items-center text-xs">
+                <span className="text-zinc-400">Outstanding Balance:</span>
+                <span className={`font-bold ${selectedCustomer.outstandingBalance > 0 ? 'text-amber-400' : 'text-emerald-400'}`}>
+                  ₹{selectedCustomer.outstandingBalance.toLocaleString('en-IN')}
+                </span>
+              </div>
+              <button
+                onClick={async () => {
+                  const amtStr = prompt(`Enter payment amount received for ${selectedCustomer.name}:`, '1000');
+                  if (!amtStr) return;
+                  const amt = parseFloat(amtStr);
+                  if (isNaN(amt) || amt <= 0) return;
+                  const targetOrd = customerOrders.find((o) => o.paymentStatus !== 'Paid')?.id || 'ord_direct';
+                  await kfosStore.recordPayment(targetOrd, selectedCustomer.id, amt, 'UPI', 'Recorded from Customer Directory');
+                  refresh();
+                }}
+                className="w-full py-2 bg-emerald-500 hover:bg-emerald-400 text-zinc-950 font-bold rounded-xl text-xs flex items-center justify-center gap-1.5"
+              >
+                <DollarSign className="w-4 h-4" />
+                Record Collection Payment
+              </button>
+            </div>
+
             {/* Quick Action Sample Buttons */}
             <div className="p-4 rounded-xl bg-zinc-900 border border-zinc-800 space-y-3">
               <h3 className="text-xs font-bold uppercase tracking-wider text-zinc-300 flex items-center gap-1.5">

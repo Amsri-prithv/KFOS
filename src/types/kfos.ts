@@ -180,6 +180,63 @@ export interface TimelineEvent {
   metadata?: Record<string, any>;
 }
 
+export interface Lead {
+  id: string;
+  name: string;
+  businessName?: string;
+  place: string;
+  phone: string;
+  status: 'New' | 'Contacted' | 'Interested' | 'Follow-up' | 'Converted' | 'Lost';
+  estimatedValue?: number;
+  assignedTo?: string;
+  createdAt: string;
+  notes?: string;
+}
+
+export interface Campaign {
+  id: string;
+  name: string;
+  channel: string;
+  budget: number;
+  startDate: string;
+  endDate: string;
+  status: 'Draft' | 'Active' | 'Completed' | 'Paused';
+  leadCount: number;
+  conversions: number;
+}
+
+export interface SupportTicket {
+  id: string;
+  ticketNumber: string;
+  customerId?: string;
+  customerName: string;
+  issue: string;
+  priority: 'Low' | 'Medium' | 'High' | 'Urgent';
+  status: 'Open' | 'In Progress' | 'Resolved' | 'Closed';
+  assignedUser: string;
+  createdAt: string;
+}
+
+export interface TaskItem {
+  id: string;
+  title: string;
+  assignedUser: string;
+  priority: 'Low' | 'Medium' | 'High';
+  dueDate: string;
+  status: 'Pending' | 'In Progress' | 'Completed';
+  category: string;
+}
+
+export interface NotificationItem {
+  id: string;
+  title: string;
+  message: string;
+  type: 'alert' | 'info' | 'warning' | 'success';
+  timestamp: string;
+  isRead: boolean;
+  linkTab?: string;
+}
+
 export interface VoiceParseResult {
   customerName: string;
   place: string;

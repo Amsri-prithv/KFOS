@@ -50,16 +50,34 @@ export const KpiDashboard: React.FC<KpiDashboardProps> = ({
     return kfosStore.subscribe(update);
   }, []);
 
-  // Mock Sales & Profit Trend Data for Recharts
-  const chartData = [
-    { day: 'Mon', revenue: 18500, profit: 5400 },
-    { day: 'Tue', revenue: 24000, profit: 7200 },
-    { day: 'Wed', revenue: 19800, profit: 6100 },
-    { day: 'Thu', revenue: 31000, profit: 9800 },
-    { day: 'Fri', revenue: 27500, profit: 8400 },
-    { day: 'Sat', revenue: 38000, profit: 12200 },
-    { day: 'Today', revenue: kpis.todayRevenue, profit: kpis.todayProfit },
-  ];
+  // Real daily sales trend built from actual orders
+  const allOrders = kfosStore.getOrders();
+  const daysMap: Record<string, { revenue: number; profit: number }> = {};
+  
+  // Get past 7 days dates in Asia/Kolkata
+  for (let i = 6; i >= 0; i--) {
+    const d = new Date(Date.now() - i * 86400000);
+    const dateStr = d.toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
+    daysMap[dateStr] = { revenue: 0, profit: 0 };
+  }
+
+  allOrders.forEach((o) => {
+    if (o.isReturned) return;
+    const dateStr = new Date(o.orderDate).toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
+    if (daysMap[dateStr]) {
+      daysMap[dateStr].revenue += o.totalAmount;
+      daysMap[dateStr].profit += o.totalProfit;
+    }
+  });
+
+  const chartData = Object.keys(daysMap).map((dateKey) => {
+    const dayLabel = new Date(dateKey).toLocaleDateString('en-US', { weekday: 'short' });
+    return {
+      day: dayLabel,
+      revenue: daysMap[dateKey].revenue,
+      profit: daysMap[dateKey].profit,
+    };
+  });
 
   return (
     <div className="space-y-6">

@@ -10,6 +10,13 @@ import {
   IndianRupee,
   Cpu,
   Settings,
+  ShoppingBag,
+  Target,
+  Receipt,
+  LifeBuoy,
+  CheckSquare,
+  Bell,
+  Megaphone,
 } from 'lucide-react';
 import { Navbar } from './components/Navbar';
 import { KpiDashboard } from './components/KpiDashboard';
@@ -22,6 +29,13 @@ import { TimelineAuditFeed } from './components/TimelineAuditFeed';
 import { FinanceLedger } from './components/FinanceLedger';
 import { AIAgentsHub } from './components/AIAgentsHub';
 import { SystemSettings } from './components/SystemSettings';
+import { ProductsCatalog } from './components/ProductsCatalog';
+import { LeadsManager } from './components/LeadsManager';
+import { ExpensesManager } from './components/ExpensesManager';
+import { SupportTicketsManager } from './components/SupportTicketsManager';
+import { TasksManager } from './components/TasksManager';
+import { NotificationsManager } from './components/NotificationsManager';
+import { CampaignsManager } from './components/CampaignsManager';
 import { PlannerModal } from './components/PlannerModal';
 import { AdminModal } from './components/AdminModal';
 import { GlobalSearchModal } from './components/GlobalSearchModal';
@@ -33,8 +47,15 @@ type ActiveTab =
   | 'customers'
   | 'orders'
   | 'inventory'
-  | 'samples'
+  | 'products'
+  | 'leads'
+  | 'expenses'
   | 'finance'
+  | 'tickets'
+  | 'tasks'
+  | 'notifications'
+  | 'campaigns'
+  | 'samples'
   | 'agents'
   | 'settings'
   | 'timeline';
@@ -149,6 +170,102 @@ export default function App() {
           </button>
 
           <button
+            onClick={() => setActiveTab('products')}
+            className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all whitespace-nowrap ${
+              activeTab === 'products'
+                ? 'bg-amber-500/10 text-amber-400 border border-amber-500/30 shadow-sm'
+                : 'text-neutral-400 hover:text-neutral-200 hover:bg-neutral-800/50'
+            }`}
+          >
+            <ShoppingBag className="w-3.5 h-3.5" />
+            <span>Products Matrix</span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab('leads')}
+            className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all whitespace-nowrap ${
+              activeTab === 'leads'
+                ? 'bg-teal-500/10 text-teal-400 border border-teal-500/30 shadow-sm'
+                : 'text-neutral-400 hover:text-neutral-200 hover:bg-neutral-800/50'
+            }`}
+          >
+            <Target className="w-3.5 h-3.5" />
+            <span>Leads CRM</span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab('expenses')}
+            className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all whitespace-nowrap ${
+              activeTab === 'expenses'
+                ? 'bg-red-500/10 text-red-400 border border-red-500/30 shadow-sm'
+                : 'text-neutral-400 hover:text-neutral-200 hover:bg-neutral-800/50'
+            }`}
+          >
+            <Receipt className="w-3.5 h-3.5" />
+            <span>Expenses</span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab('finance')}
+            className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all whitespace-nowrap ${
+              activeTab === 'finance'
+                ? 'bg-amber-500/10 text-amber-400 border border-amber-500/30 shadow-sm'
+                : 'text-neutral-400 hover:text-neutral-200 hover:bg-neutral-800/50'
+            }`}
+          >
+            <IndianRupee className="w-3.5 h-3.5" />
+            <span>Finance & Ledger</span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab('tickets')}
+            className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all whitespace-nowrap ${
+              activeTab === 'tickets'
+                ? 'bg-teal-500/10 text-teal-400 border border-teal-500/30 shadow-sm'
+                : 'text-neutral-400 hover:text-neutral-200 hover:bg-neutral-800/50'
+            }`}
+          >
+            <LifeBuoy className="w-3.5 h-3.5" />
+            <span>Support Tickets</span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab('tasks')}
+            className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all whitespace-nowrap ${
+              activeTab === 'tasks'
+                ? 'bg-amber-500/10 text-amber-400 border border-amber-500/30 shadow-sm'
+                : 'text-neutral-400 hover:text-neutral-200 hover:bg-neutral-800/50'
+            }`}
+          >
+            <CheckSquare className="w-3.5 h-3.5" />
+            <span>Tasks</span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab('notifications')}
+            className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all whitespace-nowrap ${
+              activeTab === 'notifications'
+                ? 'bg-blue-500/10 text-blue-400 border border-blue-500/30 shadow-sm'
+                : 'text-neutral-400 hover:text-neutral-200 hover:bg-neutral-800/50'
+            }`}
+          >
+            <Bell className="w-3.5 h-3.5" />
+            <span>Alerts</span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab('campaigns')}
+            className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all whitespace-nowrap ${
+              activeTab === 'campaigns'
+                ? 'bg-indigo-500/10 text-indigo-400 border border-indigo-500/30 shadow-sm'
+                : 'text-neutral-400 hover:text-neutral-200 hover:bg-neutral-800/50'
+            }`}
+          >
+            <Megaphone className="w-3.5 h-3.5" />
+            <span>Campaigns</span>
+          </button>
+
+          <button
             onClick={() => setActiveTab('samples')}
             className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all whitespace-nowrap ${
               activeTab === 'samples'
@@ -235,6 +352,20 @@ export default function App() {
         {activeTab === 'orders' && <OrderManager isAdminUnlocked={isAdminUnlocked} />}
 
         {activeTab === 'inventory' && <InventoryPoolManager />}
+
+        {activeTab === 'products' && <ProductsCatalog />}
+
+        {activeTab === 'leads' && <LeadsManager />}
+
+        {activeTab === 'expenses' && <ExpensesManager userRole={isAdminUnlocked ? 'Founder' : 'Sales'} />}
+
+        {activeTab === 'tickets' && <SupportTicketsManager userRole={isAdminUnlocked ? 'Founder' : 'Support'} />}
+
+        {activeTab === 'tasks' && <TasksManager userRole={isAdminUnlocked ? 'Founder' : 'Operations'} />}
+
+        {activeTab === 'notifications' && <NotificationsManager />}
+
+        {activeTab === 'campaigns' && <CampaignsManager />}
 
         {activeTab === 'samples' && <SamplesTracker />}
 
