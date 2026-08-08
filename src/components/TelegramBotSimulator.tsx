@@ -162,10 +162,10 @@ export const TelegramBotSimulator: React.FC<TelegramBotSimulatorProps> = ({ onCl
   };
 
   // Commit Order to Store
-  const confirmAndCommitOrder = () => {
+  const confirmAndCommitOrder = async () => {
     if (!pendingConfirmation) return;
 
-    const res = kfosStore.createOrder({
+    const res = await kfosStore.createOrder({
       customerName: pendingConfirmation.customerName,
       customerPlace: pendingConfirmation.place,
       productVariant: pendingConfirmation.productVariant,

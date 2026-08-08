@@ -3,34 +3,26 @@ import crypto from 'crypto';
 import { generateToken, verifyToken } from '../utils/jwt.js';
 import { PERMISSION_MATRIX, Role } from '../config/permissions.js';
 import { config } from '../config/env.js';
+import { firestoreDb } from '../firebase/firestore.js';
 
 function hashPin(pin: string): string {
   return crypto.createHash('sha256').update(pin).digest('hex');
 }
 
-// In-memory rate limiting map for login attempts
-interface AttemptTracker {
-  attempts: number;
-  lockoutTimer: NodeJS.Timeout | null;
-  lockedUntil: number;
-}
-export const loginAttempts = new Map<string, AttemptTracker>();
-
 const LOCKOUT_DURATION = 60 * 1000; // 1 minute lockout
 const MAX_ATTEMPTS = 5;
 
-// Clean up expired rate limiting entries every 5 minutes to avoid memory leaks
-setInterval(() => {
-  const now = Date.now();
-  for (const [ip, tracker] of loginAttempts.entries()) {
-    if (now > tracker.lockedUntil && tracker.attempts >= MAX_ATTEMPTS) {
-      loginAttempts.delete(ip);
-    }
-  }
-}, 5 * 60 * 1000).unref();
+const getAttemptRef = (ip: string) => {
+  // Sanitize IP address so it is a safe Firestore document ID
+  const safeIp = ip.replace(/[^a-zA-Z0-9.-]/g, '_');
+  return firestoreDb.collection('authLoginAttempts').doc(safeIp);
+};
 
 function getIpAddress(req: Request): string {
-  return req.ip || req.socket.remoteAddress || '127.0.0.1';
+  // Safe client IP extraction handling X-Forwarded-For under trust proxy configuration
+  const rawIp = req.ip || req.socket.remoteAddress || '127.0.0.1';
+  // Strip IPv6-mapped IPv4 prefix if present
+  return rawIp.startsWith('::ffff:') ? rawIp.slice(7) : rawIp;
 }
 
 export function resolveRoleFromPin(pin: string, pinsConfig: {
@@ -73,9 +65,32 @@ export const handleLogin = async (req: Request, res: Response) => {
   const ip = getIpAddress(req);
   const now = Date.now();
 
-  let tracker = loginAttempts.get(ip);
-  if (tracker && tracker.lockedUntil > now) {
-    const timeLeft = Math.ceil((tracker.lockedUntil - now) / 1000);
+  const attemptRef = getAttemptRef(ip);
+
+  // Read rate-limiting state atomically
+  let attempts = 0;
+  let lockedUntil = 0;
+
+  try {
+    const doc = await attemptRef.get();
+    if (doc.exists) {
+      const data = doc.data() || {};
+      lockedUntil = data.lockedUntil || 0;
+      attempts = data.attempts || 0;
+
+      // Reset attempts if lockout duration has passed
+      if (lockedUntil > 0 && now > lockedUntil) {
+        attempts = 0;
+        lockedUntil = 0;
+        await attemptRef.delete().catch(() => {});
+      }
+    }
+  } catch (err) {
+    console.warn('[Auth] Error reading rate limits, falling back to permissive mode:', err);
+  }
+
+  if (lockedUntil > 0 && now < lockedUntil) {
+    const timeLeft = Math.ceil((lockedUntil - now) / 1000);
     return res.status(429).json({
       success: false,
       error: `Too many failed login attempts. Please try again in ${timeLeft} seconds.`,
@@ -97,20 +112,24 @@ export const handleLogin = async (req: Request, res: Response) => {
   }
 
   if (!account) {
-    // Record failed attempt
-    if (!tracker) {
-      tracker = { attempts: 0, lockoutTimer: null, lockedUntil: 0 };
-      loginAttempts.set(ip, tracker);
+    // Record failed attempt in Firestore
+    const newAttempts = attempts + 1;
+    let newLockedUntil = 0;
+    if (newAttempts >= MAX_ATTEMPTS) {
+      newLockedUntil = now + LOCKOUT_DURATION;
     }
-    tracker.attempts += 1;
 
-    if (tracker.attempts >= MAX_ATTEMPTS) {
-      tracker.lockedUntil = now + LOCKOUT_DURATION;
-      if (tracker.lockoutTimer) clearTimeout(tracker.lockoutTimer);
-      tracker.lockoutTimer = setTimeout(() => {
-        loginAttempts.delete(ip);
-      }, LOCKOUT_DURATION);
+    try {
+      await attemptRef.set({
+        attempts: newAttempts,
+        lockedUntil: newLockedUntil,
+        lastAttempt: now,
+      }, { merge: true });
+    } catch (err) {
+      console.warn('[Auth] Error writing rate limit:', err);
+    }
 
+    if (newAttempts >= MAX_ATTEMPTS) {
       return res.status(429).json({
         success: false,
         error: 'Too many failed login attempts. Account locked for 1 minute.',
@@ -120,10 +139,11 @@ export const handleLogin = async (req: Request, res: Response) => {
     return res.status(401).json({ success: false, error: 'Invalid PIN or credentials.' });
   }
 
-  // Success! Clear attempt tracking
-  if (tracker) {
-    if (tracker.lockoutTimer) clearTimeout(tracker.lockoutTimer);
-    loginAttempts.delete(ip);
+  // Success! Clear attempt tracking in Firestore
+  try {
+    await attemptRef.delete().catch(() => {});
+  } catch (err) {
+    console.warn('[Auth] Error clearing rate limit:', err);
   }
 
   const role: Role = account.role;
@@ -132,6 +152,24 @@ export const handleLogin = async (req: Request, res: Response) => {
     id: account.id,
     name: account.name,
     role,
+  });
+
+  // Set secure HttpOnly cookie for session token
+  const isProduction = process.env.NODE_ENV === 'production';
+  res.cookie('kfos_session', token, {
+    httpOnly: true,
+    secure: isProduction,
+    sameSite: 'lax',
+    maxAge: 24 * 60 * 60 * 1000, // 24 hours
+  });
+
+  // Set standard cookie for CSRF token validation
+  const csrfToken = crypto.randomUUID();
+  res.cookie('XSRF-TOKEN', csrfToken, {
+    httpOnly: false,
+    secure: isProduction,
+    sameSite: 'lax',
+    maxAge: 24 * 60 * 60 * 1000,
   });
 
   return res.json({
@@ -147,8 +185,26 @@ export const handleLogin = async (req: Request, res: Response) => {
 };
 
 export const handleVerify = async (req: Request, res: Response) => {
+  // Support both header and cookie authentication
+  let token = '';
   const authHeader = req.headers['authorization'];
-  const token = authHeader && authHeader.startsWith('Bearer ') ? authHeader.slice(7) : authHeader;
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    token = authHeader.slice(7);
+  } else if (authHeader) {
+    token = authHeader;
+  } else {
+    const cookiesHeader = req.headers.cookie;
+    if (cookiesHeader) {
+      const parsedCookies: Record<string, string> = {};
+      cookiesHeader.split(';').forEach((cookie) => {
+        const parts = cookie.split('=');
+        if (parts.length >= 2) {
+          parsedCookies[parts[0].trim()] = parts.slice(1).join('=').trim();
+        }
+      });
+      token = parsedCookies['kfos_session'] || '';
+    }
+  }
 
   if (!token) {
     return res.status(401).json({ authenticated: false, error: 'Missing authorization token' });
@@ -168,4 +224,10 @@ export const handleVerify = async (req: Request, res: Response) => {
       permissions: PERMISSION_MATRIX[payload.role],
     },
   });
+};
+
+export const handleLogout = async (req: Request, res: Response) => {
+  res.clearCookie('kfos_session');
+  res.clearCookie('XSRF-TOKEN');
+  return res.json({ success: true, message: 'Logged out successfully' });
 };

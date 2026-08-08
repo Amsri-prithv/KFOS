@@ -7,7 +7,7 @@ import { fileURLToPath } from 'url';
 import { config } from './server/config/env.js';
 import { handleNluParse } from './server/api/nlu.controller.js';
 import { handleTelegramMessage, handleTelegramWebhook } from './server/api/telegram.controller.js';
-import { handleLogin, handleVerify } from './server/api/auth.controller.js';
+import { handleLogin, handleVerify, handleLogout } from './server/api/auth.controller.js';
 import { handleAgentExecution } from './server/api/agents.controller.js';
 import { dbService } from './server/services/db.service.js';
 import { authenticateToken, requireRole, requireResourcePermission } from './server/middleware/auth.js';
@@ -25,6 +25,7 @@ import {
   createPayment,
   getGenericCollection,
   createGenericDoc,
+  updateGenericDoc,
 } from './server/api/firestore.controller.js';
 import { errorHandler } from './server/middleware/errorHandler.js';
 
@@ -69,6 +70,7 @@ app.get('/api/health', (req, res) => {
 // Authentication APIs (Public)
 app.post('/api/auth/login', handleLogin);
 app.get('/api/auth/verify', handleVerify);
+app.post('/api/auth/logout', handleLogout);
 
 // Phase 3: Database Health Check API (Hardened - No sensitive statistics for public)
 app.get('/api/db/health', async (req, res) => {
@@ -125,6 +127,11 @@ app.post('/api/firestore/collection/:name', authenticateToken, (req, res, next) 
   const name = req.params.name;
   return requireResourcePermission(name)(req, res, next);
 }, createGenericDoc);
+
+app.patch('/api/firestore/collection/:name/:id', authenticateToken, (req, res, next) => {
+  const name = req.params.name;
+  return requireResourcePermission(name)(req, res, next);
+}, updateGenericDoc);
 
 // Voice & Text NLU Parsing API (Protected)
 app.post('/api/nlu/parse', authenticateToken, requireResourcePermission('nlu'), handleNluParse);

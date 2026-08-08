@@ -322,3 +322,50 @@ export async function createGenericDoc(req: Request, res: Response) {
     res.status(400).json({ success: false, error: sanitizeErrorMessage(err, 'Failed to create document') });
   }
 }
+
+export async function updateGenericDoc(req: Request, res: Response) {
+  try {
+    const { name, id } = req.params;
+    if (!id || typeof id !== 'string') {
+      return res.status(400).json({ success: false, error: 'Document ID is required' });
+    }
+    if (!WHITELISTED_COLLECTIONS.includes(name)) {
+      return res.status(400).json({ success: false, error: `Invalid collection name: ${name}` });
+    }
+
+    // Explicit Role-Based Collection Level Access Enforcement
+    const userRole = (req as any).user?.role;
+    if (!userRole) {
+      return res.status(401).json({ success: false, error: 'Unauthorized: User role not found' });
+    }
+
+    const allowedRoles = COLLECTION_PERMISSIONS[name]?.write || [];
+    if (userRole !== 'Founder' && !allowedRoles.includes(userRole)) {
+      return res.status(403).json({ success: false, error: `Access Denied: Role ${userRole} is not authorized to update collection ${name}` });
+    }
+
+    if (READ_ONLY_COLLECTIONS.includes(name)) {
+      return res.status(403).json({ success: false, error: `Updates to collection ${name} are prohibited via generic API.` });
+    }
+
+    // Verify document existence first to respect resource authorization
+    const existing = await genericRepository.getById(name as CollectionName, id);
+    if (!existing) {
+      return res.status(404).json({ success: false, error: `Document ${id} not found in collection ${name}` });
+    }
+
+    // Prevent mass assignment or privilege escalation. Sanitise input data:
+    const data = { ...req.body };
+    delete data.id; // ID is immutable
+    delete data.createdAt; // createdAt is immutable
+    delete data._systemSecret;
+    delete data.isAdmin;
+    delete data.role;
+
+    const doc = await genericRepository.update(name as CollectionName, id, data);
+    res.json({ success: true, collection: name, data: doc });
+  } catch (err: any) {
+    console.error(`[Firestore] updateGenericDoc ${req.params.name}/${req.params.id} error:`, err);
+    res.status(400).json({ success: false, error: sanitizeErrorMessage(err, 'Failed to update document') });
+  }
+}

@@ -33,25 +33,25 @@ export const SamplesTracker: React.FC = () => {
     return kfosStore.subscribe(refresh);
   }, []);
 
-  const handleIssueSample = (e: React.FormEvent) => {
+  const handleIssueSample = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedCustomerId) return;
 
-    const res = kfosStore.distributeSample(selectedCustomerId, sampleType, sampleCount);
+    const res = await kfosStore.distributeSample(selectedCustomerId, sampleType, sampleCount);
     if (res.success) {
       alert(res.message);
       setShowIssueModal(false);
       setSelectedCustomerId('');
       setSampleCount(1);
     } else {
-      alert(res.message);
+      alert(res.error || 'Failed to issue sample');
     }
   };
 
-  const handleCompleteFollowUp = (sampleId: string) => {
+  const handleCompleteFollowUp = async (sampleId: string) => {
     const notes = prompt('Enter follow-up outcome notes (optional):', 'Customer trial feedback positive.');
     if (notes !== null) {
-      kfosStore.completeFollowUp(sampleId, notes);
+      await kfosStore.completeFollowUp(sampleId, notes);
     }
   };
 

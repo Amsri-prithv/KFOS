@@ -60,24 +60,24 @@ export const CustomerDirectory: React.FC<CustomerDirectoryProps> = ({
       c.phone.includes(searchQuery)
   );
 
-  const handleCreateCustomer = (e: React.FormEvent) => {
+  const handleCreateCustomer = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newCustName.trim() || !newCustPlace.trim()) return;
 
-    kfosStore.findOrCreateCustomer(newCustName, newCustPlace, newCustPhone);
+    await kfosStore.findOrCreateCustomer(newCustName, newCustPlace, newCustPhone);
     setShowAddModal(false);
     setNewCustName('');
     setNewCustPlace('');
     setNewCustPhone('');
   };
 
-  const handleIssueSample = (customerId: string, sampleType: '200ml' | '500ml') => {
-    const res = kfosStore.distributeSample(customerId, sampleType, 1);
+  const handleIssueSample = async (customerId: string, sampleType: '200ml' | '500ml') => {
+    const res = await kfosStore.distributeSample(customerId, sampleType, 1);
     if (res.success) {
       alert(res.message);
       refresh();
     } else {
-      alert(res.message);
+      alert(res.error || 'Failed to distribute sample');
     }
   };
 

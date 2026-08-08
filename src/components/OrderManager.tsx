@@ -49,9 +49,9 @@ export const OrderManager: React.FC<OrderManagerProps> = ({ isAdminUnlocked }) =
     return kfosStore.subscribe(refresh);
   }, []);
 
-  const handleCreateOrder = (e: React.FormEvent) => {
+  const handleCreateOrder = async (e: React.FormEvent) => {
     e.preventDefault();
-    const res = kfosStore.createOrder({
+    const res = await kfosStore.createOrder({
       customerName: custName,
       customerPlace: custPlace,
       productVariant: variant,
@@ -74,17 +74,17 @@ export const OrderManager: React.FC<OrderManagerProps> = ({ isAdminUnlocked }) =
     }
   };
 
-  const handleProcessReturn = (e: React.FormEvent) => {
+  const handleProcessReturn = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedOrderForReturn || !returnReason.trim()) return;
 
-    const res = kfosStore.processReturn(selectedOrderForReturn.id, returnReason);
+    const res = await kfosStore.processReturn(selectedOrderForReturn.id, returnReason);
     if (res.success) {
       setSelectedOrderForReturn(null);
       setReturnReason('');
       alert(res.message);
     } else {
-      alert(res.message);
+      alert(res.error || 'Failed to process return');
     }
   };
 

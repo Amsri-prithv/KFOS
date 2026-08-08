@@ -18,6 +18,13 @@ import {
   NotificationItem,
 } from '../types/kfos';
 
+const generateUUID = (): string => {
+  if (typeof window !== 'undefined' && window.crypto && typeof window.crypto.randomUUID === 'function') {
+    return window.crypto.randomUUID();
+  }
+  return 'uuid-' + Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
+};
+
 class KFOSStore {
   private customers: Customer[] = [];
   private orders: Order[] = [];
@@ -135,6 +142,18 @@ class KFOSStore {
         this.timeline = auditRes.data;
       }
 
+      // Fetch returns / reversed orders
+      const retRes = await fetch('/api/firestore/collection/returns', { headers }).then((r) => r.json()).catch(() => ({}));
+      if (retRes.success && Array.isArray(retRes.data)) {
+        this.returns = retRes.data;
+      }
+
+      // Fetch samples
+      const sampRes = await fetch('/api/firestore/collection/samples', { headers }).then((r) => r.json()).catch(() => ({}));
+      if (sampRes.success && Array.isArray(sampRes.data)) {
+        this.samples = sampRes.data;
+      }
+
       this.notify();
     } catch (err) {
       console.warn('[KFOSStore] Firestore sync error:', err);
@@ -152,7 +171,7 @@ class KFOSStore {
     this.listeners.forEach((l) => l());
   }
 
-  // Helper Timeline logger
+  // Helper Timeline logger (Server-authoritative sync is handled on backend, local memory timeline here)
   public async logTimeline(
     type: TimelineEvent['type'],
     title: string,
@@ -173,8 +192,6 @@ class KFOSStore {
     };
     this.timeline.unshift(event);
     this.notify();
-
-    // Direct client-side audit logging is disabled to ensure audit log integrity remains strictly server-authoritative.
   }
 
   // Getters
@@ -218,166 +235,6 @@ class KFOSStore {
     return this.telegramActivities;
   }
 
-  public async addExpense(expense: Omit<ExpenseRecord, 'id'>): Promise<{ success: boolean; data?: ExpenseRecord; error?: string }> {
-    const newDoc: ExpenseRecord = {
-      ...expense,
-      id: 'exp-' + Date.now(),
-    };
-    this.expenses.unshift(newDoc);
-    this.notify();
-    try {
-      const headers = await this.getAuthHeaders();
-      const res = await fetch('/api/firestore/expenses', {
-        method: 'POST',
-        headers,
-        body: JSON.stringify(newDoc),
-      }).then((r) => r.json());
-      if (res.success) {
-        return { success: true, data: newDoc };
-      }
-      return { success: false, error: res.error || 'Failed to create expense' };
-    } catch (e: any) {
-      return { success: false, error: e.message || 'Expense creation error' };
-    }
-  }
-
-  public async addLead(lead: Omit<Lead, 'id' | 'createdAt'>): Promise<{ success: boolean; data?: Lead; error?: string }> {
-    const newDoc: Lead = {
-      ...lead,
-      id: 'lead-' + Date.now(),
-      createdAt: new Date().toISOString(),
-    };
-    this.leads.unshift(newDoc);
-    this.notify();
-    try {
-      const headers = await this.getAuthHeaders();
-      const res = await fetch('/api/firestore/collection/leads', {
-        method: 'POST',
-        headers,
-        body: JSON.stringify(newDoc),
-      }).then((r) => r.json());
-      return { success: res.success, data: newDoc, error: res.error };
-    } catch (e: any) {
-      return { success: false, error: e.message };
-    }
-  }
-
-  public async updateLeadStatus(id: string, status: Lead['status']): Promise<boolean> {
-    const item = this.leads.find((l) => l.id === id);
-    if (!item) return false;
-    item.status = status;
-    this.notify();
-    try {
-      const headers = await this.getAuthHeaders();
-      await fetch('/api/firestore/collection/leads', {
-        method: 'POST',
-        headers,
-        body: JSON.stringify(item),
-      });
-      return true;
-    } catch {
-      return false;
-    }
-  }
-
-  public async addCampaign(campaign: Omit<Campaign, 'id'>): Promise<{ success: boolean; data?: Campaign; error?: string }> {
-    const newDoc: Campaign = {
-      ...campaign,
-      id: 'camp-' + Date.now(),
-    };
-    this.campaigns.unshift(newDoc);
-    this.notify();
-    try {
-      const headers = await this.getAuthHeaders();
-      const res = await fetch('/api/firestore/collection/campaigns', {
-        method: 'POST',
-        headers,
-        body: JSON.stringify(newDoc),
-      }).then((r) => r.json());
-      return { success: res.success, data: newDoc, error: res.error };
-    } catch (e: any) {
-      return { success: false, error: e.message };
-    }
-  }
-
-  public async addSupportTicket(ticket: Omit<SupportTicket, 'id' | 'ticketNumber' | 'createdAt'>): Promise<{ success: boolean; data?: SupportTicket; error?: string }> {
-    const newDoc: SupportTicket = {
-      ...ticket,
-      id: 'tick-' + Date.now(),
-      ticketNumber: 'TICK-' + Math.floor(1000 + Math.random() * 9000),
-      createdAt: new Date().toISOString(),
-    };
-    this.supportTickets.unshift(newDoc);
-    this.notify();
-    try {
-      const headers = await this.getAuthHeaders();
-      const res = await fetch('/api/firestore/collection/supportTickets', {
-        method: 'POST',
-        headers,
-        body: JSON.stringify(newDoc),
-      }).then((r) => r.json());
-      return { success: res.success, data: newDoc, error: res.error };
-    } catch (e: any) {
-      return { success: false, error: e.message };
-    }
-  }
-
-  public async updateSupportTicketStatus(id: string, status: SupportTicket['status']): Promise<boolean> {
-    const item = this.supportTickets.find((t) => t.id === id);
-    if (!item) return false;
-    item.status = status;
-    this.notify();
-    try {
-      const headers = await this.getAuthHeaders();
-      await fetch('/api/firestore/collection/supportTickets', {
-        method: 'POST',
-        headers,
-        body: JSON.stringify(item),
-      });
-      return true;
-    } catch {
-      return false;
-    }
-  }
-
-  public async addTask(task: Omit<TaskItem, 'id'>): Promise<{ success: boolean; data?: TaskItem; error?: string }> {
-    const newDoc: TaskItem = {
-      ...task,
-      id: 'task-' + Date.now(),
-    };
-    this.tasks.unshift(newDoc);
-    this.notify();
-    try {
-      const headers = await this.getAuthHeaders();
-      const res = await fetch('/api/firestore/collection/tasks', {
-        method: 'POST',
-        headers,
-        body: JSON.stringify(newDoc),
-      }).then((r) => r.json());
-      return { success: res.success, data: newDoc, error: res.error };
-    } catch (e: any) {
-      return { success: false, error: e.message };
-    }
-  }
-
-  public async updateTaskStatus(id: string, status: TaskItem['status']): Promise<boolean> {
-    const item = this.tasks.find((t) => t.id === id);
-    if (!item) return false;
-    item.status = status;
-    this.notify();
-    try {
-      const headers = await this.getAuthHeaders();
-      await fetch('/api/firestore/collection/tasks', {
-        method: 'POST',
-        headers,
-        body: JSON.stringify(item),
-      });
-      return true;
-    } catch {
-      return false;
-    }
-  }
-
   public getLiquidStocks(): LiquidStockPool[] {
     return this.stocks;
   }
@@ -402,53 +259,225 @@ class KFOSStore {
   public canGetFreeSample(customerId: string): { allowed: boolean; remainingFree: number } {
     const customer = this.getCustomerById(customerId);
     if (!customer) return { allowed: false, remainingFree: 0 };
-    const remainingFree = Math.max(0, 2 - customer.free200mlSamplesUsed);
+    const remainingFree = Math.max(0, 2 - (customer.free200mlSamplesUsed || 0));
     return {
       allowed: remainingFree > 0,
       remainingFree,
     };
   }
 
-  // Business Logic: Add/Find Customer
-  public findOrCreateCustomer(name: string, place: string, phone = ''): Customer {
+  // Server-Authoritative Adders
+  public async addExpense(expense: Omit<ExpenseRecord, 'id'>): Promise<{ success: boolean; data?: ExpenseRecord; error?: string }> {
+    try {
+      const headers = await this.getAuthHeaders();
+      const res = await fetch('/api/firestore/expenses', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(expense),
+      }).then((r) => r.json());
+      if (res.success && res.data) {
+        this.expenses.unshift(res.data);
+        this.notify();
+        return { success: true, data: res.data };
+      }
+      return { success: false, error: res.error || 'Failed to create expense' };
+    } catch (e: any) {
+      return { success: false, error: e.message || 'Expense creation error' };
+    }
+  }
+
+  public async addLead(lead: Omit<Lead, 'id' | 'createdAt'>): Promise<{ success: boolean; data?: Lead; error?: string }> {
+    try {
+      const headers = await this.getAuthHeaders();
+      const res = await fetch('/api/firestore/collection/leads', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(lead),
+      }).then((r) => r.json());
+      if (res.success && res.data) {
+        this.leads.unshift(res.data);
+        this.notify();
+        return { success: true, data: res.data };
+      }
+      return { success: false, error: res.error || 'Failed to create lead' };
+    } catch (e: any) {
+      return { success: false, error: e.message || 'Lead creation error' };
+    }
+  }
+
+  public async updateLeadStatus(id: string, status: Lead['status']): Promise<boolean> {
+    const item = this.leads.find((l) => l.id === id);
+    if (!item) return false;
+    try {
+      const headers = await this.getAuthHeaders();
+      const res = await fetch(`/api/firestore/collection/leads/${id}`, {
+        method: 'PATCH',
+        headers,
+        body: JSON.stringify({ status }),
+      }).then((r) => r.json());
+      if (res.success && res.data) {
+        item.status = status;
+        this.notify();
+        return true;
+      }
+      return false;
+    } catch {
+      return false;
+    }
+  }
+
+  public async addCampaign(campaign: Omit<Campaign, 'id'>): Promise<{ success: boolean; data?: Campaign; error?: string }> {
+    try {
+      const headers = await this.getAuthHeaders();
+      const res = await fetch('/api/firestore/collection/campaigns', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(campaign),
+      }).then((r) => r.json());
+      if (res.success && res.data) {
+        this.campaigns.unshift(res.data);
+        this.notify();
+        return { success: true, data: res.data };
+      }
+      return { success: false, error: res.error || 'Failed to create campaign' };
+    } catch (e: any) {
+      return { success: false, error: e.message || 'Campaign creation error' };
+    }
+  }
+
+  public async addSupportTicket(ticket: Omit<SupportTicket, 'id' | 'ticketNumber' | 'createdAt'>): Promise<{ success: boolean; data?: SupportTicket; error?: string }> {
+    try {
+      const headers = await this.getAuthHeaders();
+      const res = await fetch('/api/firestore/collection/supportTickets', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(ticket),
+      }).then((r) => r.json());
+      if (res.success && res.data) {
+        this.supportTickets.unshift(res.data);
+        this.notify();
+        return { success: true, data: res.data };
+      }
+      return { success: false, error: res.error || 'Failed to create support ticket' };
+    } catch (e: any) {
+      return { success: false, error: e.message || 'Support ticket creation error' };
+    }
+  }
+
+  public async updateSupportTicketStatus(id: string, status: SupportTicket['status']): Promise<boolean> {
+    const item = this.supportTickets.find((t) => t.id === id);
+    if (!item) return false;
+    try {
+      const headers = await this.getAuthHeaders();
+      const res = await fetch(`/api/firestore/collection/supportTickets/${id}`, {
+        method: 'PATCH',
+        headers,
+        body: JSON.stringify({ status }),
+      }).then((r) => r.json());
+      if (res.success && res.data) {
+        item.status = status;
+        this.notify();
+        return true;
+      }
+      return false;
+    } catch {
+      return false;
+    }
+  }
+
+  public async addTask(task: Omit<TaskItem, 'id'>): Promise<{ success: boolean; data?: TaskItem; error?: string }> {
+    try {
+      const headers = await this.getAuthHeaders();
+      const res = await fetch('/api/firestore/collection/tasks', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(task),
+      }).then((r) => r.json());
+      if (res.success && res.data) {
+        this.tasks.unshift(res.data);
+        this.notify();
+        return { success: true, data: res.data };
+      }
+      return { success: false, error: res.error || 'Failed to create task' };
+    } catch (e: any) {
+      return { success: false, error: e.message || 'Task creation error' };
+    }
+  }
+
+  public async updateTaskStatus(id: string, status: TaskItem['status']): Promise<boolean> {
+    const item = this.tasks.find((t) => t.id === id);
+    if (!item) return false;
+    try {
+      const headers = await this.getAuthHeaders();
+      const res = await fetch(`/api/firestore/collection/tasks/${id}`, {
+        method: 'PATCH',
+        headers,
+        body: JSON.stringify({ status }),
+      }).then((r) => r.json());
+      if (res.success && res.data) {
+        item.status = status;
+        this.notify();
+        return true;
+      }
+      return false;
+    } catch {
+      return false;
+    }
+  }
+
+  // Business Logic: Find/Create Customer (Server-Authoritative)
+  public async findOrCreateCustomer(name: string, place: string, phone = ''): Promise<Customer> {
     const cleanName = name.trim();
     const cleanPlace = place.trim();
-    let existing = this.customers.find(
+    const existing = this.customers.find(
       (c) => c.name.toLowerCase() === cleanName.toLowerCase() && c.place.toLowerCase() === cleanPlace.toLowerCase()
     );
 
     if (existing) return existing;
 
-    const newCust: Customer = {
-      id: 'cust-' + Date.now(),
-      name: cleanName,
-      place: cleanPlace || 'Tamil Nadu',
-      phone: phone || '+91 90000 00000',
-      outstandingBalance: 0,
-      free200mlSamplesUsed: 0,
-      totalOrdersCount: 0,
-      totalSpent: 0,
-      createdAt: new Date().toISOString(),
-      isArchived: false,
-    };
-
-    this.customers.unshift(newCust);
-    this.logTimeline('Order Created', `New Customer Added: ${cleanName}`, `Location: ${cleanPlace}`, newCust.id, cleanName);
-    this.notify();
-
-    this.getAuthHeaders().then((headers) => {
-      fetch('/api/firestore/customers', {
+    try {
+      const headers = await this.getAuthHeaders();
+      const res = await fetch('/api/firestore/customers', {
         method: 'POST',
         headers,
-        body: JSON.stringify(newCust),
-      }).catch((e) => console.warn('[Firestore] Sync customer error:', e));
-    });
+        body: JSON.stringify({
+          name: cleanName,
+          place: cleanPlace || 'Tamil Nadu',
+          phone: phone || '+91 90000 00000',
+        }),
+      }).then((r) => r.json());
 
-    return newCust;
+      if (res.success && res.data) {
+        const newCust: Customer = res.data;
+        this.customers.unshift(newCust);
+        this.logTimeline('Order Created', `New Customer Added: ${cleanName}`, `Location: ${cleanPlace}`, newCust.id, cleanName);
+        this.notify();
+        return newCust;
+      }
+      throw new Error(res.error || 'Failed to create customer');
+    } catch (err: any) {
+      console.warn('[Store] findOrCreateCustomer error:', err);
+      // Fallback in-memory ONLY if API completely fails (to maintain operation under severe degradation)
+      const fallbackCust: Customer = {
+        id: 'cust-' + generateUUID(),
+        name: cleanName,
+        place: cleanPlace || 'Tamil Nadu',
+        phone: phone || '+91 90000 00000',
+        outstandingBalance: 0,
+        free200mlSamplesUsed: 0,
+        totalOrdersCount: 0,
+        totalSpent: 0,
+        createdAt: new Date().toISOString(),
+        isArchived: false,
+      };
+      this.customers.unshift(fallbackCust);
+      this.notify();
+      return fallbackCust;
+    }
   }
 
-  // Business Logic: Process New Order
-  public createOrder(data: {
+  // Business Logic: Process New Order (Server-Authoritative)
+  public async createOrder(data: {
     customerName: string;
     customerPlace: string;
     productVariant: ProductVariant;
@@ -459,7 +488,7 @@ class KFOSStore {
     source?: Order['source'];
     notes?: string;
     samplesRequested?: { sampleType: '200ml' | '500ml'; quantity: number }[];
-  }): { success: boolean; order?: Order; error?: string } {
+  }): Promise<{ success: boolean; order?: Order; error?: string }> {
     const {
       customerName,
       customerPlace,
@@ -477,7 +506,7 @@ class KFOSStore {
       return { success: false, error: 'Quantity must be at least 1 unit' };
     }
 
-    // 1. Check & Deduct Shared Liquid Inventory Pool
+    // Check shared pool stock pool local check
     const stockPool = this.stocks.find((s) => s.quality === quality);
     if (!stockPool) {
       return { success: false, error: `Invalid quality level ${quality}` };
@@ -490,99 +519,12 @@ class KFOSStore {
       };
     }
 
-    // Deduct from shared pool
-    stockPool.currentStock5L -= quantity;
+    try {
+      // Create Customer Authoritatively
+      const customer = await this.findOrCreateCustomer(customerName, customerPlace);
 
-    // 2. Pricing & Profit Matrix Calculations
-    const pricing = PRICING_MATRIX[quality];
-    const buyPrice = pricing.buyPrice;
-    const salePrice = pricing.salePrice;
-    const discount = Math.max(0, discountPerUnit);
-    // Realized profit = salePrice - buyPrice - discount
-    const realizedProfitPerUnit = salePrice - buyPrice - discount;
-    const totalItemPrice = (salePrice - discount) * quantity;
-    const totalItemProfit = realizedProfitPerUnit * quantity;
-
-    // 3. Get or Create Customer
-    const customer = this.findOrCreateCustomer(customerName, customerPlace);
-
-    // 4. Create Order Object
-    const orderNumber = `KF-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}`;
-    const orderItem: OrderItem = {
-      id: 'item-' + Date.now(),
-      productVariant,
-      quality,
-      quantity,
-      buyPricePerUnit: buyPrice,
-      salePricePerUnit: salePrice,
-      discountPerUnit: discount,
-      realizedProfitPerUnit,
-      totalAmount: totalItemPrice,
-      totalProfit: totalItemProfit,
-    };
-
-    const actualPaid = Math.min(paidAmount, totalItemPrice);
-    const unpaidBalance = totalItemPrice - actualPaid;
-
-    let paymentStatus: Order['paymentStatus'] = 'Unpaid';
-    if (actualPaid >= totalItemPrice) {
-      paymentStatus = 'Paid';
-    } else if (actualPaid > 0) {
-      paymentStatus = 'Partial';
-    }
-
-    const order: Order = {
-      id: 'ord-' + Date.now(),
-      orderNumber,
-      customerId: customer.id,
-      customerName: customer.name,
-      customerPlace: customer.place,
-      items: [orderItem],
-      totalAmount: totalItemPrice,
-      totalDiscount: discount * quantity,
-      totalProfit: totalItemProfit,
-      paidAmount: actualPaid,
-      paymentStatus,
-      orderDate: new Date().toISOString(),
-      isReturned: false,
-      source,
-      notes,
-      isArchived: false,
-    };
-
-    this.orders.unshift(order);
-
-    // Update Customer Statistics
-    customer.totalOrdersCount += 1;
-    customer.totalSpent += totalItemPrice;
-    customer.outstandingBalance += unpaidBalance;
-
-    // 5. Process Samples if any
-    const processedSamples: SampleDistribution[] = [];
-    for (const req of samplesRequested) {
-      const sampleRes = this.distributeSampleInternal(customer, req.sampleType, req.quantity);
-      if (sampleRes) {
-        processedSamples.push(...sampleRes);
-      }
-    }
-    if (processedSamples.length > 0) {
-      order.samples = processedSamples;
-    }
-
-    // 6. Log Timeline
-    this.logTimeline(
-      'Order Created',
-      `Order ${orderNumber} - ₹${totalItemPrice.toLocaleString('en-IN')}`,
-      `${quantity} Cans of ${quality} ${productVariant} delivered to ${customer.name} (${customer.place}). Realized Profit: ₹${totalItemProfit.toLocaleString('en-IN')}. Paid: ₹${actualPaid}.`,
-      customer.id,
-      customer.name,
-      { orderId: order.id, totalProfit: totalItemProfit, paymentStatus }
-    );
-
-    this.notify();
-
-    this.getAuthHeaders().then((headers) => {
-      fetch('/api/firestore/orders', {
+      const headers = await this.getAuthHeaders();
+      const res = await fetch('/api/firestore/orders', {
         method: 'POST',
         headers,
         body: JSON.stringify({
@@ -594,198 +536,212 @@ class KFOSStore {
               productVariant,
               quality,
               quantity,
-              discountPerUnit: discount,
+              discountPerUnit,
             },
           ],
-          paidAmount: actualPaid,
+          paidAmount,
           source,
           notes,
         }),
-      })
-      .then((res) => res.json())
-      .then((data) => {
-        if (data.success && data.data) {
-          this.syncWithFirestore();
+      }).then((r) => r.json());
+
+      if (res.success && res.data) {
+        const order: Order = res.data;
+        this.orders.unshift(order);
+
+        // Deduct from local stock pool authoritatively using server-returned quantity
+        const returnedQty = order.items[0]?.quantity || quantity;
+        stockPool.currentStock5L = Math.max(0, stockPool.currentStock5L - returnedQty);
+
+        // Sync Customer Stats to local memory using server values
+        customer.totalOrdersCount += 1;
+        customer.totalSpent += order.totalAmount;
+        customer.outstandingBalance += (order.totalAmount - order.paidAmount);
+
+        // Handle samples distribution authoritatively on the server side if returned
+        if (order.samples && order.samples.length > 0) {
+          order.samples.forEach((samp) => {
+            this.samples.unshift(samp);
+            if (samp.chargeAmount > 0) {
+              customer.outstandingBalance += samp.chargeAmount;
+            }
+          });
         }
-      })
-      .catch((e) => console.warn('[Firestore] Sync order error:', e));
-    });
 
-    return { success: true, order };
-  }
+        // Log Timeline
+        this.logTimeline(
+          'Order Created',
+          `Order ${order.orderNumber} - ₹${order.totalAmount.toLocaleString('en-IN')}`,
+          `${returnedQty} Cans of ${quality} ${productVariant} delivered to ${customer.name} (${customer.place}). Realized Profit: ₹${order.totalProfit.toLocaleString('en-IN')}. Paid: ₹${order.paidAmount}.`,
+          customer.id,
+          customer.name,
+          { orderId: order.id, totalProfit: order.totalProfit, paymentStatus: order.paymentStatus }
+        );
 
-  // Internal Sample Distribution Enforcement
-  private distributeSampleInternal(
-    customer: Customer,
-    sampleType: '200ml' | '500ml',
-    qty: number
-  ): SampleDistribution[] {
-    const list: SampleDistribution[] = [];
-    const now = new Date();
-    // Follow up in exactly 3 days (72 hours)
-    const followUpDate = new Date(now.getTime() + 3 * 86400000).toISOString();
-
-    for (let i = 0; i < qty; i++) {
-      let isFree = false;
-      let chargeAmount = 0;
-
-      // Rule C: Only Premium Quality samples. Lifetime free limit: 2 x 200ml free per customer.
-      if (sampleType === '200ml') {
-        if (customer.free200mlSamplesUsed < 2) {
-          isFree = true;
-          chargeAmount = 0;
-          customer.free200mlSamplesUsed += 1;
-        } else {
-          isFree = false;
-          chargeAmount = 200; // Paid 200ml
-        }
-      } else {
-        // 500ml is ALWAYS paid ₹300
-        isFree = false;
-        chargeAmount = 300;
+        this.notify();
+        return { success: true, order };
       }
 
-      const sample: SampleDistribution = {
-        id: 'samp-' + Date.now() + '-' + i,
-        customerId: customer.id,
-        customerName: customer.name,
-        sampleType,
-        isFree,
-        quantity: 1,
-        chargeAmount,
-        profit: 0, // CRITICAL MANDATE: ₹0 PROFIT FOR SAMPLES
-        distributedAt: now.toISOString(),
-        followUpDueDate: followUpDate,
-        followUpStatus: 'Pending',
-        followUpNotes: `Automated 3-day follow-up for ${sampleType} ${isFree ? 'Free' : 'Paid'} Premium Sample.`,
-      };
-
-      this.samples.unshift(sample);
-      list.push(sample);
-
-      if (chargeAmount > 0) {
-        customer.outstandingBalance += chargeAmount;
-      }
-
-      this.logTimeline(
-        'Sample Distributed',
-        `Sample ${sampleType} (${isFree ? 'FREE' : '₹' + chargeAmount}) Issued`,
-        `Issued to ${customer.name}. Mandatory ₹0 profit applied. Follow-up scheduled for ${new Date(followUpDate).toLocaleDateString('en-IN')}.`,
-        customer.id,
-        customer.name
-      );
+      return { success: false, error: res.error || 'Failed to create order on server' };
+    } catch (e: any) {
+      return { success: false, error: e.message || 'Order creation error' };
     }
-    return list;
   }
 
-  // Public Direct Sample Distribution Method
-  public distributeSample(customerId: string, sampleType: '200ml' | '500ml', count = 1): { success: boolean; message?: string } {
+  // Public Direct Sample Distribution Method (Server-Authoritative)
+  public async distributeSample(customerId: string, sampleType: '200ml' | '500ml', count = 1): Promise<{ success: boolean; message?: string; error?: string }> {
     const customer = this.getCustomerById(customerId);
-    if (!customer) return { success: false, message: 'Customer not found' };
+    if (!customer) return { success: false, error: 'Customer not found' };
 
-    const list = this.distributeSampleInternal(customer, sampleType, count);
-    this.notify();
-    return {
-      success: true,
-      message: `Successfully distributed ${count}x ${sampleType} sample(s) to ${customer.name}. Follow-up reminder active for 3 days.`,
-    };
+    try {
+      const headers = await this.getAuthHeaders();
+      const res = await fetch('/api/firestore/collection/samples', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          customerId: customer.id,
+          customerName: customer.name,
+          sampleType,
+          quantity: count,
+          isFree: this.canGetFreeSample(customer.id).allowed && sampleType === '200ml',
+        }),
+      }).then((r) => r.json());
+
+      if (res.success && res.data) {
+        const sample: SampleDistribution = res.data;
+        this.samples.unshift(sample);
+
+        if (sample.chargeAmount > 0) {
+          customer.outstandingBalance += sample.chargeAmount;
+        }
+        if (sample.isFree && sampleType === '200ml') {
+          customer.free200mlSamplesUsed = (customer.free200mlSamplesUsed || 0) + count;
+        }
+
+        this.logTimeline(
+          'Sample Distributed',
+          `Sample ${sampleType} (${sample.isFree ? 'FREE' : '₹' + sample.chargeAmount}) Issued`,
+          `Issued to ${customer.name}. Mandatory ₹0 profit applied. Follow-up scheduled.`,
+          customer.id,
+          customer.name
+        );
+
+        this.notify();
+        return {
+          success: true,
+          message: `Successfully distributed ${count}x ${sampleType} sample(s) to ${customer.name}. Follow-up reminder active for 3 days.`,
+        };
+      }
+      return { success: false, error: res.error || 'Failed to distribute sample' };
+    } catch (e: any) {
+      return { success: false, error: e.message || 'Sample distribution error' };
+    }
   }
 
   // Complete Follow-Up
-  public completeFollowUp(sampleId: string, notes?: string) {
+  public async completeFollowUp(sampleId: string, notes?: string): Promise<boolean> {
     const s = this.samples.find((samp) => samp.id === sampleId);
-    if (s) {
-      s.followUpStatus = 'Completed';
-      if (notes) s.followUpNotes = notes;
-      this.logTimeline('FollowUp Scheduled', `Follow-up Completed for ${s.customerName}`, notes || 'Customer responded to sample trial.', s.customerId, s.customerName);
-      this.notify();
+    if (!s) return false;
+    try {
+      const headers = await this.getAuthHeaders();
+      const res = await fetch(`/api/firestore/collection/samples/${sampleId}`, {
+        method: 'PATCH',
+        headers,
+        body: JSON.stringify({ followUpStatus: 'Completed', followUpNotes: notes }),
+      }).then((r) => r.json());
+      if (res.success && res.data) {
+        s.followUpStatus = 'Completed';
+        if (notes) s.followUpNotes = notes;
+        this.logTimeline('FollowUp Scheduled', `Follow-up Completed for ${s.customerName}`, notes || 'Customer responded to sample trial.', s.customerId, s.customerName);
+        this.notify();
+        return true;
+      }
+      return false;
+    } catch {
+      return false;
     }
   }
 
-  // Business Logic: Return & Profit Reversal Rules
-  public processReturn(orderId: string, reason: string): { success: boolean; message?: string } {
+  // Business Logic: Return & Profit Reversal Rules (Server-Authoritative)
+  public async processReturn(orderId: string, reason: string): Promise<{ success: boolean; message?: string; error?: string }> {
     const order = this.orders.find((o) => o.id === orderId);
-    if (!order) return { success: false, message: 'Order not found' };
-    if (order.isReturned) return { success: false, message: 'Order has already been returned' };
+    if (!order) return { success: false, error: 'Order not found' };
+    if (order.isReturned) return { success: false, error: 'Order has already been returned' };
 
-    // 1. Restore Physical Inventory Stock Immediately
-    order.items.forEach((item) => {
-      const stockPool = this.stocks.find((s) => s.quality === item.quality);
-      if (stockPool) {
-        stockPool.currentStock5L += item.quantity;
-      }
-    });
-
-    // 2. Automatically Reverse (Deduct) Per-Unit Profit from Net Metrics
-    const reversedProfit = order.totalProfit;
-    const refundAmount = order.totalAmount;
-
-    order.isReturned = true;
-    order.returnedAt = new Date().toISOString();
-    order.returnReason = reason;
-
-    // Update Customer records
-    const customer = this.getCustomerById(order.customerId);
-    if (customer) {
-      customer.outstandingBalance = Math.max(0, customer.outstandingBalance - (order.totalAmount - order.paidAmount));
-      customer.totalSpent = Math.max(0, customer.totalSpent - order.totalAmount);
-    }
-
-    // Record Return
-    const returnRecord: ReturnRecord = {
-      id: 'ret-' + Date.now(),
-      orderId: order.id,
-      orderNumber: order.orderNumber,
-      customerId: order.customerId,
-      customerName: order.customerName,
-      returnedItems: order.items.map((i) => ({
-        productVariant: i.productVariant,
-        quality: i.quality,
-        quantity: i.quantity,
-        reversedProfit: i.totalProfit,
-      })),
-      totalReversedProfit: reversedProfit,
-      totalRefundAmount: refundAmount,
-      returnedAt: new Date().toISOString(),
-      reason,
-    };
-
-    this.returns.unshift(returnRecord);
-
-    // 3. Log Return Event on Customer Timeline & Audit Log
-    this.logTimeline(
-      'Return Processed',
-      `RETURN: Order ${order.orderNumber} - Stock Restored`,
-      `Returned ${order.items.map((i) => `${i.quantity}x ${i.quality} ${i.productVariant}`).join(', ')}. Restored liquid stock pool. Reversed Profit: -₹${reversedProfit.toLocaleString('en-IN')}. Reason: ${reason}`,
-      order.customerId,
-      order.customerName,
-      { orderId, reversedProfit, refundAmount }
-    );
-
-    this.notify();
-
-    this.getAuthHeaders().then((headers) => {
-      fetch('/api/firestore/collection/returns', {
+    try {
+      const headers = await this.getAuthHeaders();
+      const res = await fetch('/api/firestore/collection/returns', {
         method: 'POST',
         headers,
-        body: JSON.stringify(returnRecord),
-      }).catch((e) => console.warn('[Firestore] Sync return error:', e));
-    });
+        body: JSON.stringify({
+          orderId: order.id,
+          orderNumber: order.orderNumber,
+          customerId: order.customerId,
+          customerName: order.customerName,
+          returnedItems: order.items.map((i) => ({
+            productVariant: i.productVariant,
+            quality: i.quality,
+            quantity: i.quantity,
+            reversedProfit: i.totalProfit,
+          })),
+          totalReversedProfit: order.totalProfit,
+          totalRefundAmount: order.totalAmount,
+          reason,
+        }),
+      }).then((r) => r.json());
 
-    return {
-      success: true,
-      message: `Return processed. ${order.items.map((i) => i.quantity).reduce((a, b) => a + b, 0)} Cans returned to Liquid Pool. Reversed Profit: -₹${reversedProfit}`,
-    };
+      if (res.success && res.data) {
+        const returnRecord: ReturnRecord = res.data;
+        this.returns.unshift(returnRecord);
+
+        // Deduct/Restore inventory and customer state authoritatively
+        order.isReturned = true;
+        order.returnedAt = returnRecord.returnedAt;
+        order.returnReason = reason;
+
+        order.items.forEach((item) => {
+          const stockPool = this.stocks.find((s) => s.quality === item.quality);
+          if (stockPool) {
+            stockPool.currentStock5L += item.quantity;
+          }
+        });
+
+        const customer = this.getCustomerById(order.customerId);
+        if (customer) {
+          customer.outstandingBalance = Math.max(0, customer.outstandingBalance - (order.totalAmount - order.paidAmount));
+          customer.totalSpent = Math.max(0, customer.totalSpent - order.totalAmount);
+        }
+
+        this.logTimeline(
+          'Return Processed',
+          `RETURN: Order ${order.orderNumber} - Stock Restored`,
+          `Returned ${order.items.map((i) => `${i.quantity}x ${i.quality} ${i.productVariant}`).join(', ')}. Restored liquid stock pool. Reversed Profit: -₹${order.totalProfit.toLocaleString('en-IN')}. Reason: ${reason}`,
+          order.customerId,
+          order.customerName,
+          { orderId, reversedProfit: order.totalProfit, refundAmount: order.totalAmount }
+        );
+
+        this.notify();
+        return {
+          success: true,
+          message: `Return processed. ${order.items.map((i) => i.quantity).reduce((a, b) => a + b, 0)} Cans returned to Liquid Pool. Reversed Profit: -₹${order.totalProfit}`,
+        };
+      }
+
+      return { success: false, error: res.error || 'Failed to process return on server' };
+    } catch (e: any) {
+      return { success: false, error: e.message || 'Return processing error' };
+    }
   }
 
-  // Business Logic: Record Payment
-  public recordPayment(
+  // Business Logic: Record Payment (Server-Authoritative)
+  public async recordPayment(
     orderIdOrCustomer: string,
     customerIdOrAmount: string | number,
     amountOrMethod: number | PaymentRecord['paymentMethod'],
     methodOrNotes?: PaymentRecord['paymentMethod'] | string,
     notesParam?: string
-  ) {
+  ): Promise<{ success: boolean; message?: string; error?: string }> {
     let orderId = orderIdOrCustomer;
     let customerId = typeof customerIdOrAmount === 'string' ? customerIdOrAmount : '';
     let amount = typeof customerIdOrAmount === 'number' ? customerIdOrAmount : (typeof amountOrMethod === 'number' ? amountOrMethod : 0);
@@ -797,57 +753,59 @@ class KFOSStore {
       order = this.orders.find((o) => o.customerId === customerId && o.paymentStatus !== 'Paid');
     }
 
-    if (order) {
-      order.paidAmount += amount;
-      if (order.paidAmount >= order.totalAmount) {
-        order.paymentStatus = 'Paid';
-      } else {
-        order.paymentStatus = 'Partial';
-      }
-    }
-
     const custId = order ? order.customerId : (customerId || 'cust-1');
-    const customer = this.getCustomerById(custId);
-    if (customer) {
-      customer.outstandingBalance = Math.max(0, customer.outstandingBalance - amount);
-    }
 
-    const payment: PaymentRecord = {
-      id: 'pay-' + Date.now(),
-      orderId: order ? order.id : 'direct-credit-receipt',
-      customerId: custId,
-      customerName: customer ? customer.name : 'Field Customer',
-      amount,
-      paymentMethod: method,
-      receivedAt: new Date().toISOString(),
-      notes,
-    };
-
-    this.payments.unshift(payment);
-
-    this.logTimeline(
-      'Payment Received',
-      `Payment Received: ₹${amount.toLocaleString('en-IN')} (${method})`,
-      `Received from ${customer ? customer.name : 'Customer'}. Balance remaining: ₹${customer ? customer.outstandingBalance.toLocaleString('en-IN') : 0}.`,
-      custId,
-      customer ? customer.name : 'Customer'
-    );
-
-    this.notify();
-
-    this.getAuthHeaders().then((headers) => {
-      fetch('/api/firestore/payments', {
+    try {
+      const headers = await this.getAuthHeaders();
+      const res = await fetch('/api/firestore/payments', {
         method: 'POST',
         headers,
         body: JSON.stringify({
           customerId: custId,
-          amount: amount,
-          notes: notes,
+          orderId: order ? order.id : undefined,
+          amount,
+          paymentMethod: method,
+          notes,
+          idempotencyKey: 'pay-' + generateUUID(),
         }),
-      }).catch((e) => console.warn('[Firestore] Sync payment error:', e));
-    });
+      }).then((r) => r.json());
 
-    return { success: true, message: `Payment of ₹${amount} recorded successfully.` };
+      if (res.success && res.data) {
+        // Payment recording succeeded authoritatively!
+        // Sync local memory state
+        const payment: PaymentRecord = res.data.payment || res.data;
+        this.payments.unshift(payment);
+
+        if (order) {
+          order.paidAmount += amount;
+          if (order.paidAmount >= order.totalAmount) {
+            order.paymentStatus = 'Paid';
+          } else {
+            order.paymentStatus = 'Partial';
+          }
+        }
+
+        const customer = this.getCustomerById(custId);
+        if (customer) {
+          customer.outstandingBalance = Math.max(0, customer.outstandingBalance - amount);
+        }
+
+        this.logTimeline(
+          'Payment Received',
+          `Payment Received: ₹${amount.toLocaleString('en-IN')} (${method})`,
+          `Received from ${customer ? customer.name : 'Customer'}. Balance remaining: ₹${customer ? customer.outstandingBalance.toLocaleString('en-IN') : 0}.`,
+          custId,
+          customer ? customer.name : 'Customer'
+        );
+
+        this.notify();
+        return { success: true, message: `Payment of ₹${amount} recorded successfully.` };
+      }
+
+      return { success: false, error: res.error || 'Failed to record payment on server' };
+    } catch (e: any) {
+      return { success: false, error: e.message || 'Payment recording error' };
+    }
   }
 
   // Restock Liquid Stock Pool
