@@ -46,7 +46,12 @@ export interface PendingActionDoc {
   summaryText: string;
   createdAt: string;
   expiresAt: number;
-  status: 'pending' | 'executed' | 'cancelled' | 'expired';
+  status: 'pending' | 'processing' | 'executed' | 'cancelled' | 'expired' | 'failed';
+  claimedAt?: string;
+  claimedBy?: string;
+  executedAt?: string;
+  failedAt?: string;
+  lastError?: string;
 }
 
 export interface PendingAction {
@@ -57,17 +62,48 @@ export interface PendingAction {
   createdAt: number;
 }
 
-export async function getPendingActionPersistent(chatId: string | number): Promise<PendingActionDoc | null> {
-  const docId = `chat_${chatId}`;
-  const doc = await firestoreDb.collection('telegramPendingActions').doc(docId).get();
+// User-Safe Document ID Generator
+export function getPendingDocId(chatId: string | number, telegramUserId?: string | number): string {
+  if (telegramUserId) {
+    return `chat_${chatId}_user_${telegramUserId}`;
+  }
+  return `chat_${chatId}`;
+}
+
+export async function getPendingActionPersistent(
+  chatId: string | number,
+  telegramUserId?: string | number
+): Promise<(PendingActionDoc & { docId: string }) | null> {
+  const primaryId = getPendingDocId(chatId, telegramUserId);
+  let doc = await firestoreDb.collection('telegramPendingActions').doc(primaryId).get();
+  let docId = primaryId;
+
+  if (!doc.exists && telegramUserId) {
+    // Fallback to chat-only ID if primary not found
+    const fallbackId = `chat_${chatId}`;
+    const fbDoc = await firestoreDb.collection('telegramPendingActions').doc(fallbackId).get();
+    if (fbDoc.exists) {
+      doc = fbDoc;
+      docId = fallbackId;
+    }
+  }
+
   if (!doc.exists) return null;
   const data = doc.data() as PendingActionDoc;
   if (data.status !== 'pending') return null;
+
   if (Date.now() > data.expiresAt) {
     await firestoreDb.collection('telegramPendingActions').doc(docId).update({ status: 'expired' });
     return null;
   }
-  return data;
+
+  // Security check: User isolation verification
+  if (data.telegramUserId && telegramUserId && data.telegramUserId !== String(telegramUserId)) {
+    console.warn(`[Security] Telegram user ${telegramUserId} attempted to view pending action owned by ${data.telegramUserId}`);
+    return null;
+  }
+
+  return { ...data, docId };
 }
 
 export async function setPendingActionPersistent(
@@ -79,7 +115,7 @@ export async function setPendingActionPersistent(
     summaryText: string;
   }
 ): Promise<void> {
-  const docId = `chat_${chatId}`;
+  const docId = getPendingDocId(chatId, telegramUserId);
   const expiresAt = Date.now() + 10 * 60 * 1000; // 10 minutes expiry
   await firestoreDb.collection('telegramPendingActions').doc(docId).set({
     chatId: String(chatId),
@@ -95,13 +131,99 @@ export async function setPendingActionPersistent(
 
 export async function clearPendingActionPersistent(
   chatId: string | number,
-  status: 'executed' | 'cancelled' = 'cancelled'
+  telegramUserId?: string | number,
+  status: 'executed' | 'cancelled' | 'failed' = 'cancelled'
 ): Promise<void> {
-  const docId = `chat_${chatId}`;
-  await firestoreDb.collection('telegramPendingActions').doc(docId).set(
-    { status, updatedAt: new Date().toISOString() },
-    { merge: true }
-  );
+  const primaryId = getPendingDocId(chatId, telegramUserId);
+  const docRef = firestoreDb.collection('telegramPendingActions').doc(primaryId);
+  const snap = await docRef.get();
+  
+  if (snap.exists) {
+    await docRef.set({ status, updatedAt: new Date().toISOString() }, { merge: true });
+  } else {
+    const fallbackRef = firestoreDb.collection('telegramPendingActions').doc(`chat_${chatId}`);
+    await fallbackRef.set({ status, updatedAt: new Date().toISOString() }, { merge: true });
+  }
+}
+
+// Atomic Claim & Execution Flow
+export async function claimAndExecutePendingActionAtomic(
+  chatId: string | number,
+  telegramUserId: string | number | undefined,
+  executor: (action: PendingActionDoc, docId: string) => Promise<string>
+): Promise<{ success: boolean; reply: string }> {
+  const primaryId = getPendingDocId(chatId, telegramUserId);
+  let targetDocId = primaryId;
+  let claimedAction: PendingActionDoc | null = null;
+
+  // Step 1: Claim pending action atomically inside Firestore transaction
+  try {
+    claimedAction = await firestoreDb.runTransaction(async (tx) => {
+      let docRef = firestoreDb.collection('telegramPendingActions').doc(primaryId);
+      let snap = await tx.get(docRef);
+
+      if (!snap.exists && telegramUserId) {
+        const fallbackRef = firestoreDb.collection('telegramPendingActions').doc(`chat_${chatId}`);
+        const fbSnap = await tx.get(fallbackRef);
+        if (fbSnap.exists) {
+          snap = fbSnap;
+          docRef = fallbackRef;
+          targetDocId = `chat_${chatId}`;
+        }
+      }
+
+      if (!snap.exists) {
+        throw new Error('No pending action found to execute.');
+      }
+
+      const data = snap.data() as PendingActionDoc;
+      if (data.status !== 'pending') {
+        throw new Error(`Action is no longer pending (current status: ${data.status}).`);
+      }
+
+      if (Date.now() > data.expiresAt) {
+        tx.update(docRef, { status: 'expired' });
+        throw new Error('Action confirmation request has expired.');
+      }
+
+      if (data.telegramUserId && telegramUserId && data.telegramUserId !== String(telegramUserId)) {
+        throw new Error('Unauthorized: This action was requested by a different user.');
+      }
+
+      // Atomically claim the pending action
+      tx.update(docRef, {
+        status: 'processing',
+        claimedAt: new Date().toISOString(),
+        claimedBy: telegramUserId ? String(telegramUserId) : 'unknown',
+      });
+
+      return data;
+    });
+  } catch (err: any) {
+    return { success: false, reply: `⚠️ ${err.message || 'Action execution failed.'}` };
+  }
+
+  // Step 2: Execute actual business operation
+  try {
+    const replyText = await executor(claimedAction, targetDocId);
+
+    // Step 3: Mark executed upon success
+    await firestoreDb.collection('telegramPendingActions').doc(targetDocId).set(
+      { status: 'executed', executedAt: new Date().toISOString() },
+      { merge: true }
+    );
+
+    return { success: true, reply: replyText };
+  } catch (err: any) {
+    console.error('[Telegram Action Execution Error]', err);
+    // Step 4: Mark failed on error so state is preserved safely
+    await firestoreDb.collection('telegramPendingActions').doc(targetDocId).set(
+      { status: 'failed', lastError: err.message || 'Execution error', failedAt: new Date().toISOString() },
+      { merge: true }
+    );
+
+    return { success: false, reply: `❌ Execution failed: ${err.message || 'Operation error'}` };
+  }
 }
 
 // Helper stubs for backwards compatibility
@@ -344,7 +466,7 @@ export const processTelegramUpdate = async (update: any): Promise<TelegramProces
     }
 
     // 3. Check for Confirmation Reply (Persistent State in Firestore)
-    const pending = await getPendingActionPersistent(chatId);
+    const pending = await getPendingActionPersistent(chatId, telegramUserId);
     if (pending && textInput) {
       const normalizedText = textInput.trim().toLowerCase();
       const isAffirmative = ['yes', 'confirm', 'aama', 'correct', 'ok', 'sari', '1', 'confirm order', 'y', 'yup'].includes(
@@ -353,18 +475,18 @@ export const processTelegramUpdate = async (update: any): Promise<TelegramProces
       const isCancellation = ['no', 'cancel', 'vendam', '0', 'stop', 'n', 'abort'].includes(normalizedText);
 
       if (isAffirmative) {
-        // Mark as executed immediately in Firestore to prevent replay attacks
-        await clearPendingActionPersistent(chatId, 'executed');
-
-        try {
+        const result = await claimAndExecutePendingActionAtomic(chatId, telegramUserId, async (action, actionDocId) => {
           let finalReply = '';
 
-          if (pending.intent === 'CREATE_CUSTOMER') {
+          if (action.intent === 'CREATE_CUSTOMER') {
+            if (!action.data.place || !action.data.phone) {
+              throw new Error(`Location and phone number are required to create customer '${action.data.name}'. Please specify location and phone (e.g., "${action.data.name} Madurai 9876543210").`);
+            }
             const newCustomer = await customersRepository.create({
-              name: pending.data.name,
-              businessName: pending.data.name,
-              place: pending.data.place || 'Tamil Nadu',
-              phone: 'Not provided',
+              name: action.data.name,
+              businessName: action.data.name,
+              place: action.data.place,
+              phone: action.data.phone,
               outstandingBalance: 0,
               free200mlSamplesUsed: 0,
               totalOrdersCount: 0,
@@ -376,15 +498,15 @@ export const processTelegramUpdate = async (update: any): Promise<TelegramProces
               `✅ NEW CUSTOMER CREATED SUCCESSFULLY!\n\n` +
               `Name: ${newCustomer.name}\n` +
               `Place: ${newCustomer.place}\n` +
+              `Phone: ${newCustomer.phone}\n` +
               `Outstanding Balance: ₹0`;
 
-            // If there was a chained intent after customer creation
-            if (pending.data.nextIntent === 'CREATE_ORDER' && pending.data.orderParams) {
-              const orderParams = pending.data.orderParams;
+            // Chained intent after customer creation
+            if (action.data.nextIntent === 'CREATE_ORDER' && action.data.orderParams) {
+              const orderParams = action.data.orderParams;
               const qualityGrade = orderParams.qualityGrade || 'Standard';
               const quantity = orderParams.quantityCans || 5;
 
-              // Pricing & Stock re-verification
               const inventory = await inventoryRepository.getAll();
               const stockItem = inventory.find(i => i.quality === qualityGrade);
               const availableStock = stockItem ? stockItem.currentStock5L : 0;
@@ -392,14 +514,9 @@ export const processTelegramUpdate = async (update: any): Promise<TelegramProces
               if (availableStock < quantity) {
                 finalReply += `\n\n⚠️ Cannot auto-create order: INSUFFICIENT STOCK for ${qualityGrade} (${availableStock} cans available).`;
               } else {
-                const pricingMap: Record<string, { sale: number; buy: number }> = {
-                  Eco: { sale: 900, buy: 650 },
-                  Standard: { sale: 1200, buy: 750 },
-                  Premium: { sale: 1500, buy: 950 },
-                };
-                const unitSale = pricingMap[qualityGrade]?.sale || 1200;
+                const pricing = PRICING_MATRIX[qualityGrade as QualityGrade] || { salePrice: 1200, buyPrice: 750 };
                 const discount = orderParams.discountPerUnit || 0;
-                const effectiveUnitPrice = Math.max(0, unitSale - discount);
+                const effectiveUnitPrice = Math.max(0, pricing.salePrice - discount);
                 const totalAmount = quantity * effectiveUnitPrice;
                 const paidAmount = orderParams.paymentAmount || 0;
 
@@ -432,9 +549,25 @@ export const processTelegramUpdate = async (update: any): Promise<TelegramProces
 
                 finalReply += `\n\n${orderSummary}`;
               }
+            } else if (action.data.nextIntent === 'RECORD_PAYMENT' && action.data.paymentAmount) {
+              const amount = action.data.paymentAmount;
+              const paySummary =
+                `💳 PAYMENT RECORDING CONFIRMATION:\n\n` +
+                `Customer: ${newCustomer.name}\n` +
+                `Payment Amount Collected: ₹${amount.toLocaleString('en-IN')}\n` +
+                `Current Outstanding: ₹0\n\n` +
+                `❓ Confirm payment of ₹${amount} for ${newCustomer.name}? Reply "Yes" or "Confirm" to execute.`;
+
+              await setPendingActionPersistent(chatId, telegramUserId, {
+                intent: 'RECORD_PAYMENT',
+                data: { customerId: newCustomer.id, amount },
+                summaryText: paySummary,
+              });
+
+              finalReply += `\n\n${paySummary}`;
             }
-          } else if (pending.intent === 'CREATE_ORDER') {
-            const createdOrder = await ordersRepository.createOrderAtomic(pending.data);
+          } else if (action.intent === 'CREATE_ORDER') {
+            const createdOrder = await ordersRepository.createOrderAtomic(action.data);
             const cust = await customersRepository.getById(createdOrder.customerId);
             finalReply =
               `✅ ORDER CREATED SUCCESSFULLY!\n\n` +
@@ -445,59 +578,33 @@ export const processTelegramUpdate = async (update: any): Promise<TelegramProces
               `Payment Status: ${createdOrder.paymentStatus}\n` +
               `Current Customer Balance: ₹${(cust?.outstandingBalance || 0).toLocaleString('en-IN')}\n\n` +
               `Stock has been deducted atomically from the inventory pool.`;
-          } else if (pending.intent === 'RECORD_PAYMENT') {
-            const customer = await customersRepository.getById(pending.data.customerId);
-            if (!customer) {
-              throw new Error('Customer record not found');
-            }
-
-            const amount = pending.data.amount;
-            const newBalance = Math.max(0, customer.outstandingBalance - amount);
-
-            // 1. Create Payment Ledger Record
-            await genericRepository.create(COLLECTIONS.PAYMENTS, {
-              customerId: customer.id,
-              customerName: customer.name,
-              amount: amount,
-              paymentDate: getIndiaDateString(),
-              paymentMethod: 'Cash / UPI',
-              notes: 'Recorded via Telegram Bot',
+          } else if (action.intent === 'RECORD_PAYMENT') {
+            const { payment, customer } = await customersRepository.recordPaymentAtomic({
+              customerId: action.data.customerId,
+              amount: action.data.amount,
+              idempotencyKey: actionDocId || (updateId ? `upd_${updateId}` : undefined),
               recordedBy: senderName,
-            });
-
-            // 2. Update Customer Balance
-            const updatedCust = await customersRepository.update(customer.id, {
-              outstandingBalance: newBalance,
-            });
-
-            // 3. Log Audit Event
-            await genericRepository.create(COLLECTIONS.AUDIT_LOGS, {
-              timestamp: new Date().toISOString(),
-              type: 'Payment Recorded',
-              title: `Payment Recorded - ₹${amount}`,
-              description: `Payment of ₹${amount} recorded for ${customer.name}. New Balance: ₹${newBalance}`,
-              customerId: customer.id,
-              customerName: customer.name,
+              notes: 'Recorded via Telegram Bot',
             });
 
             finalReply =
               `✅ PAYMENT RECORDED SUCCESSFULLY!\n\n` +
-              `Customer: ${updatedCust.name}\n` +
-              `Amount Paid: ₹${amount.toLocaleString('en-IN')}\n` +
-              `Updated Outstanding Balance: ₹${updatedCust.outstandingBalance.toLocaleString('en-IN')}`;
-          } else if (pending.intent === 'RECORD_EXPENSE') {
-            const exp = await expensesRepository.create(pending.data);
+              `Customer: ${customer.name}\n` +
+              `Amount Paid: ₹${payment.amount.toLocaleString('en-IN')}\n` +
+              `Updated Outstanding Balance: ₹${customer.outstandingBalance.toLocaleString('en-IN')}`;
+          } else if (action.intent === 'RECORD_EXPENSE') {
+            const exp = await expensesRepository.create(action.data);
             finalReply =
               `✅ EXPENSE RECORDED SUCCESSFULLY!\n\n` +
               `Title: ${exp.title}\n` +
               `Category: ${exp.category}\n` +
               `Amount: ₹${exp.amount.toLocaleString('en-IN')}`;
-          } else if (pending.intent === 'RESTOCK_INVENTORY') {
+          } else if (action.intent === 'RESTOCK_INVENTORY') {
             const res = await inventoryRepository.updateStockAtomic(
-              pending.data.quality,
-              pending.data.quantity,
+              action.data.quality,
+              action.data.quantity,
               'RESTOCK',
-              pending.data.reason
+              action.data.reason
             );
             finalReply =
               `✅ INVENTORY RESTOCKED SUCCESSFULLY!\n\n` +
@@ -505,16 +612,13 @@ export const processTelegramUpdate = async (update: any): Promise<TelegramProces
               `New Stock Level: ${res.inventory.currentStock5L} cans`;
           }
 
-          await sendMessageToTelegram(chatId, finalReply, messageId);
-          return { success: true, actionExecuted: true, reply: finalReply };
-        } catch (err: any) {
-          console.error('[Telegram Service] Execution error:', err);
-          const errReply = `❌ Execution failed: ${err.message || 'Operation error'}`;
-          await sendMessageToTelegram(chatId, errReply, messageId);
-          return { success: false, error: err.message, reply: errReply };
-        }
+          return finalReply;
+        });
+
+        await sendMessageToTelegram(chatId, result.reply, messageId);
+        return { success: result.success, actionExecuted: result.success, reply: result.reply };
       } else if (isCancellation) {
-        await clearPendingActionPersistent(chatId, 'cancelled');
+        await clearPendingActionPersistent(chatId, telegramUserId, 'cancelled');
         const cancelReply = `❌ Pending operation cancelled. No changes were made.`;
         await sendMessageToTelegram(chatId, cancelReply, messageId);
         return { success: true, reply: cancelReply };
@@ -820,16 +924,25 @@ export const processTelegramUpdate = async (update: any): Promise<TelegramProces
         const matchRes = await matchCustomerSafe(nluResult.customerName);
         if (matchRes.status === 'EXACT' && matchRes.customer) {
           const cust = matchRes.customer;
-          await customersRepository.update(cust.id, {
-            free200mlSamplesUsed: (cust.free200mlSamplesUsed || 0) + 1,
-          });
-          replyText =
-            `🧪 Premium Sample Dispatched!\n` +
-            `Recipient: ${cust.name}\n` +
-            `Sample Type: 200ml Premium Room Freshener\n` +
-            `Follow-up reminder scheduled in 3 days.`;
+          try {
+            const { sampleRecord, customer: updatedCust } = await customersRepository.recordSampleAtomic({
+              customerId: cust.id,
+              sampleType: '200ml Premium Room Freshener',
+              recordedBy: senderName,
+            });
+            replyText =
+              `🧪 Premium Free Sample Dispatched & Recorded!\n` +
+              `Recipient: ${updatedCust.name}\n` +
+              `Sample Type: ${sampleRecord.sampleType}\n` +
+              `Lifetime Free Samples Used: ${updatedCust.free200mlSamplesUsed}/3\n` +
+              `Follow-up reminder scheduled in 3 days.`;
+          } catch (sampleErr: any) {
+            replyText = `⚠️ Free Sample Allocation Failed: ${sampleErr.message}`;
+          }
+        } else if (matchRes.status === 'MULTIPLE' && matchRes.matches) {
+          replyText = `Multiple customers match '${nluResult.customerName}': ${matchRes.matches.map(c => `${c.name} (${c.place})`).join(', ')}. Please specify exact name or place.`;
         } else {
-          replyText = `Customer record not found for sample recipient '${nluResult.customerName}'.`;
+          replyText = `Customer record not found for sample recipient '${nluResult.customerName}'. Please create customer record first.`;
         }
       }
     } else {

@@ -334,6 +334,31 @@ If essential parameters are missing for an intent (e.g., missing customer or qua
     }
 
     const parsed: NluParseResult = JSON.parse(responseText);
+
+    // Strict Post-Validation Layer (never trust Gemini output directly without field validation)
+    if (parsed.intent === 'CREATE_ORDER') {
+      if (!parsed.customerName || !parsed.customerName.trim()) {
+        parsed.needsClarification = true;
+        parsed.clarificationQuestion = 'Endha customer name ku order create pannanam? Please specify customer name.';
+      } else if (!parsed.quantityCans || parsed.quantityCans <= 0) {
+        parsed.needsClarification = true;
+        parsed.clarificationQuestion = `Evlo cans venum for ${parsed.customerName}? Please specify quantity.`;
+      }
+    } else if (parsed.intent === 'RECORD_PAYMENT') {
+      if (!parsed.customerName || !parsed.customerName.trim()) {
+        parsed.needsClarification = true;
+        parsed.clarificationQuestion = 'Endha customer payment pannitaaru? Please specify customer name.';
+      } else if (!parsed.paymentAmount || parsed.paymentAmount <= 0) {
+        parsed.needsClarification = true;
+        parsed.clarificationQuestion = `Evlo amount ${parsed.customerName} payment pannitaaru? Please specify payment amount.`;
+      }
+    } else if (parsed.intent === 'RECORD_EXPENSE') {
+      if (!parsed.expenseAmount || parsed.expenseAmount <= 0) {
+        parsed.needsClarification = true;
+        parsed.clarificationQuestion = 'Evlo amount expense aachu? Please specify expense amount.';
+      }
+    }
+
     return parsed;
   } catch (err: any) {
     console.warn('[NLU Service] Gemini API call error/rate-limit. Falling back to rule-based engine:', err.message || err);

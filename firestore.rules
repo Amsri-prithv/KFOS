@@ -35,9 +35,9 @@ service cloud.firestore {
       return isSignedIn() && (getRole() == 'Support' || isFounderOrAdmin());
     }
 
-    // System E2E test collection - restricted to Founder/Admin
+    // System E2E test collection - Server Admin SDK only (deny all browser client access)
     match /_systemTests/{testId} {
-      allow read, write: if isFounderOrAdmin();
+      allow read, write: if false;
     }
 
     // CUSTOMERS: Founder/Admin/Sales write; Support & others read
@@ -63,7 +63,7 @@ service cloud.firestore {
       allow write: if isSales();
     }
 
-    // ORDER ITEMS: Trusted server-side writes only
+    // ORDER ITEMS: Server-side Admin SDK only
     match /orderItems/{id} {
       allow read: if isSignedIn();
       allow write: if false;
@@ -75,23 +75,22 @@ service cloud.firestore {
       allow write: if isOps();
     }
 
-    // INVENTORY TRANSACTIONS: Server-side append only
+    // INVENTORY TRANSACTIONS: Server-side Admin SDK only
     match /inventoryTransactions/{id} {
       allow read: if isSignedIn();
-      allow create: if isOps();
-      allow update, delete: if false;
+      allow write: if false;
     }
 
-    // PAYMENTS: Founder/Admin/Finance create/update/read
+    // PAYMENTS: Server-side Admin SDK only (recorded via authenticated server endpoints)
     match /payments/{id} {
-      allow read: if isSignedIn();
-      allow write: if isFinance();
+      allow read: if isSignedIn() && (isFinance() || isFounderOrAdmin());
+      allow write: if false;
     }
 
-    // EXPENSES: Founder/Admin/Finance create/update/read
+    // EXPENSES: Server-side Admin SDK only
     match /expenses/{id} {
-      allow read: if isSignedIn();
-      allow write: if isFinance();
+      allow read: if isSignedIn() && (isFinance() || isFounderOrAdmin());
+      allow write: if false;
     }
 
     // LEADS & CAMPAIGNS: Sales/Admin write; others read
@@ -122,11 +121,10 @@ service cloud.firestore {
       allow read, write: if isSignedIn();
     }
 
-    // AUDIT LOGS: Founder/Admin read; append only
+    // AUDIT LOGS: Server-side Admin SDK append only
     match /auditLogs/{id} {
       allow read: if isFounderOrAdmin();
-      allow create: if isSignedIn();
-      allow update, delete: if false;
+      allow write: if false;
     }
 
     // Telegram backend collections (Server-only via Admin SDK)
