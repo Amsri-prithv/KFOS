@@ -9,7 +9,9 @@
     "start": "node dist/server.cjs",
     "build": "vite build && esbuild server.ts --bundle --platform=node --target=node18 --outfile=dist/server.cjs --format=cjs --external:express --external:vite",
     "clean": "rm -rf dist server.js",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "test": "vitest run",
+    "test:e2e": "vitest run tests/system-e2e.test.ts"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",

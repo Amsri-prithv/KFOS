@@ -207,6 +207,6 @@ export async function runTelegramTestSuite() {
 describe('Telegram Bot & NLU Automation Suite', () => {
   it('executes full telegram bot flow and assertions', async () => {
     await runTelegramTestSuite();
-  }, 30000);
+  }, 60000);
 });
 

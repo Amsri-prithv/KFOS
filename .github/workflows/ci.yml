@@ -25,5 +25,11 @@ jobs:
       - name: Run Type Checking & Linting
         run: npm run lint
 
+      - name: Run Unit/Integration Tests
+        run: npm run test
+
+      - name: Run E2E Tests
+        run: npm run test:e2e
+
       - name: Build Application
         run: npm run build
