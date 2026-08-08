@@ -1,3 +1,4 @@
+import { getCollectionRef, COLLECTIONS } from '../firebase/firestore.js';
 import { customersRepository } from '../repositories/customers.repository.js';
 import { ordersRepository } from '../repositories/orders.repository.js';
 import { inventoryRepository } from '../repositories/inventory.repository.js';
@@ -15,6 +16,17 @@ export interface DatabaseHealth {
 }
 
 export const dbService = {
+  checkConnection: async (): Promise<boolean> => {
+    try {
+      // Fast minimal check to see if database is responsive
+      await getCollectionRef(COLLECTIONS.CUSTOMERS).limit(1).get();
+      return true;
+    } catch (err) {
+      console.error('[Firestore Connection Check] Failed:', err);
+      return false;
+    }
+  },
+
   getHealthStatus: async (): Promise<DatabaseHealth> => {
     try {
       const startTime = performance.now();
@@ -53,7 +65,7 @@ export const dbService = {
         latencyMs: 0,
         warnings: [],
         hasWarnings: false,
-        error: err.message,
+        error: 'Database connection failed. Contact administrator.',
       };
     }
   },

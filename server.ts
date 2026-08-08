@@ -11,6 +11,7 @@ import { handleLogin, handleVerify } from './server/api/auth.controller.js';
 import { handleAgentExecution } from './server/api/agents.controller.js';
 import { dbService } from './server/services/db.service.js';
 import { authenticateToken, requireRole, requireResourcePermission } from './server/middleware/auth.js';
+import { verifyToken } from './server/utils/jwt.js';
 import {
   getCustomers,
   createCustomer,
@@ -34,24 +35,30 @@ const __dirname = path.dirname(__filename);
 const app = express();
 const PORT = config.port;
 
-app.use(express.json({ limit: '20mb' }));
+// Phase 4: Express Hardening - Dynamic JSON limits based on endpoint
+app.use((req, res, next) => {
+  if (
+    req.path === '/api/nlu/parse' ||
+    req.path === '/api/telegram/webhook' ||
+    req.path === '/api/telegram/message'
+  ) {
+    return express.json({ limit: '20mb' })(req, res, next);
+  }
+  return express.json({ limit: '100kb' })(req, res, next);
+});
 
-// Health Check API (Public)
+// Phase 4: Handle malformed JSON safely without throwing server-side trace leaks
+app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
+  if (err instanceof SyntaxError && 'status' in err && err.status === 400 && 'body' in err) {
+    return res.status(400).json({ success: false, error: 'Malformed JSON payload' });
+  }
+  next(err);
+});
+
+// Phase 3: Public Health Check API (Hardened - No internal diagnostics)
 app.get('/api/health', (req, res) => {
-  const memoryUsage = process.memoryUsage();
   res.json({
-    status: 'online',
-    app: 'KFOS - Kashmeer Fragrances Operating System',
-    timestamp: new Date().toISOString(),
-    uptime: process.uptime(),
-    nodeVersion: process.version,
-    pid: process.pid,
-    memory: {
-      rss: `${Math.round(memoryUsage.rss / 1024 / 1024)} MB`,
-      heapTotal: `${Math.round(memoryUsage.heapTotal / 1024 / 1024)} MB`,
-      heapUsed: `${Math.round(memoryUsage.heapUsed / 1024 / 1024)} MB`,
-      external: `${Math.round(memoryUsage.external / 1024 / 1024)} MB`,
-    },
+    status: 'ok',
   });
 });
 
@@ -59,10 +66,29 @@ app.get('/api/health', (req, res) => {
 app.post('/api/auth/login', handleLogin);
 app.get('/api/auth/verify', handleVerify);
 
-// Database Health Check API (Public)
+// Phase 3: Database Health Check API (Hardened - No sensitive statistics for public)
 app.get('/api/db/health', async (req, res) => {
-  const health = await dbService.getHealthStatus();
-  res.json(health);
+  const authHeader = req.headers['authorization'];
+  const token = authHeader && authHeader.startsWith('Bearer ') ? authHeader.slice(7) : authHeader;
+
+  let isAuthorized = false;
+  if (token) {
+    const payload = verifyToken(token);
+    if (payload && (payload.role === 'Admin' || payload.role === 'Founder' || payload.role === 'Finance')) {
+      isAuthorized = true;
+    }
+  }
+
+  if (isAuthorized) {
+    const health = await dbService.getHealthStatus();
+    return res.json(health);
+  } else {
+    const isConnected = await dbService.checkConnection();
+    return res.json({
+      connected: isConnected,
+      status: isConnected ? 'ok' : 'error',
+    });
+  }
 });
 
 // Telegram Bot Webhook (Public webhook routes)

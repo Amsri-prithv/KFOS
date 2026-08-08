@@ -7,13 +7,34 @@ import { expensesRepository } from '../repositories/expenses.repository.js';
 import { genericRepository } from '../repositories/generic.repository.js';
 import { CollectionName } from '../firebase/firestore.js';
 
+function sanitizeErrorMessage(err: any, defaultMsg: string): string {
+  if (!err) return defaultMsg;
+  const msg = err.message || '';
+  const isValidationError = 
+    msg.includes('required') || 
+    msg.includes('must be') || 
+    msg.includes('limit') || 
+    msg.includes('reached') || 
+    msg.includes('Insufficient') || 
+    msg.includes('already') || 
+    msg.includes('Invalid') ||
+    msg.includes('prohibited') ||
+    msg.includes('not found') ||
+    msg.includes('maximum');
+
+  if (isValidationError) {
+    return msg;
+  }
+  return defaultMsg;
+}
+
 export async function getCustomers(req: Request, res: Response) {
   try {
     const customers = await customersRepository.getAll();
     res.json({ success: true, data: customers });
   } catch (err: any) {
     console.error('[Firestore] getCustomers error:', err);
-    res.status(500).json({ success: false, error: err.message || 'Failed to fetch customers' });
+    res.status(500).json({ success: false, error: sanitizeErrorMessage(err, 'Failed to fetch customers') });
   }
 }
 
@@ -23,7 +44,7 @@ export async function createCustomer(req: Request, res: Response) {
     res.json({ success: true, data: customer });
   } catch (err: any) {
     console.error('[Firestore] createCustomer error:', err);
-    res.status(400).json({ success: false, error: err.message || 'Failed to create customer' });
+    res.status(400).json({ success: false, error: sanitizeErrorMessage(err, 'Failed to create customer') });
   }
 }
 
@@ -33,17 +54,17 @@ export async function getOrders(req: Request, res: Response) {
     res.json({ success: true, data: orders });
   } catch (err: any) {
     console.error('[Firestore] getOrders error:', err);
-    res.status(500).json({ success: false, error: err.message || 'Failed to fetch orders' });
+    res.status(500).json({ success: false, error: sanitizeErrorMessage(err, 'Failed to fetch orders') });
   }
 }
 
 export async function createOrder(req: Request, res: Response) {
   try {
-    const order = await ordersRepository.create(req.body);
+    const order = await ordersRepository.createOrderAtomic(req.body);
     res.json({ success: true, data: order });
   } catch (err: any) {
     console.error('[Firestore] createOrder error:', err);
-    res.status(400).json({ success: false, error: err.message || 'Failed to create order' });
+    res.status(400).json({ success: false, error: sanitizeErrorMessage(err, 'Failed to create order') });
   }
 }
 
@@ -53,7 +74,7 @@ export async function getInventory(req: Request, res: Response) {
     res.json({ success: true, data: inventory });
   } catch (err: any) {
     console.error('[Firestore] getInventory error:', err);
-    res.status(500).json({ success: false, error: err.message || 'Failed to fetch inventory' });
+    res.status(500).json({ success: false, error: sanitizeErrorMessage(err, 'Failed to fetch inventory') });
   }
 }
 
@@ -67,7 +88,7 @@ export async function updateInventory(req: Request, res: Response) {
     res.json({ success: true, data: item });
   } catch (err: any) {
     console.error('[Firestore] updateInventory error:', err);
-    res.status(400).json({ success: false, error: err.message || 'Failed to update inventory' });
+    res.status(400).json({ success: false, error: sanitizeErrorMessage(err, 'Failed to update inventory') });
   }
 }
 
@@ -77,7 +98,7 @@ export async function getProducts(req: Request, res: Response) {
     res.json({ success: true, data: products });
   } catch (err: any) {
     console.error('[Firestore] getProducts error:', err);
-    res.status(500).json({ success: false, error: err.message || 'Failed to fetch products' });
+    res.status(500).json({ success: false, error: sanitizeErrorMessage(err, 'Failed to fetch products') });
   }
 }
 
@@ -87,7 +108,7 @@ export async function getExpenses(req: Request, res: Response) {
     res.json({ success: true, data: expenses });
   } catch (err: any) {
     console.error('[Firestore] getExpenses error:', err);
-    res.status(500).json({ success: false, error: err.message || 'Failed to fetch expenses' });
+    res.status(500).json({ success: false, error: sanitizeErrorMessage(err, 'Failed to fetch expenses') });
   }
 }
 
@@ -97,7 +118,7 @@ export async function createExpense(req: Request, res: Response) {
     res.json({ success: true, data: expense });
   } catch (err: any) {
     console.error('[Firestore] createExpense error:', err);
-    res.status(400).json({ success: false, error: err.message || 'Failed to create expense' });
+    res.status(400).json({ success: false, error: sanitizeErrorMessage(err, 'Failed to create expense') });
   }
 }
 
@@ -123,10 +144,19 @@ const WHITELISTED_COLLECTIONS = [
 ];
 
 const READ_ONLY_COLLECTIONS = [
-  'payments',
+  'customers',
+  'orders',
+  'orderItems',
+  'inventory',
   'inventoryTransactions',
+  'payments',
+  'expenses',
+  'samples',
+  'products',
+  'productVariants',
   'auditLogs',
-  'samples'
+  'telegramPendingActions',
+  'telegramProcessedUpdates'
 ];
 
 export async function getGenericCollection(req: Request, res: Response) {
@@ -139,7 +169,7 @@ export async function getGenericCollection(req: Request, res: Response) {
     res.json({ success: true, collection: name, data: docs });
   } catch (err: any) {
     console.error(`[Firestore] getGenericCollection ${req.params.name} error:`, err);
-    res.status(500).json({ success: false, error: err.message || 'Failed to fetch collection' });
+    res.status(500).json({ success: false, error: sanitizeErrorMessage(err, 'Failed to fetch collection') });
   }
 }
 
@@ -150,12 +180,19 @@ export async function createGenericDoc(req: Request, res: Response) {
       return res.status(400).json({ success: false, error: `Invalid collection name: ${name}` });
     }
     if (READ_ONLY_COLLECTIONS.includes(name)) {
-      return res.status(403).json({ success: false, error: `Writes to collection ${name} are prohibited via client API.` });
+      return res.status(403).json({ success: false, error: `Writes to collection ${name} are prohibited via generic API.` });
     }
-    const doc = await genericRepository.create(name as CollectionName, req.body);
+    
+    // Prevent mass assignment or privilege escalation. Sanitise input data:
+    const data = { ...req.body };
+    delete data._systemSecret;
+    delete data.isAdmin;
+    delete data.role;
+
+    const doc = await genericRepository.create(name as CollectionName, data);
     res.json({ success: true, collection: name, data: doc });
   } catch (err: any) {
     console.error(`[Firestore] createGenericDoc ${req.params.name} error:`, err);
-    res.status(400).json({ success: false, error: err.message || 'Failed to create document' });
+    res.status(400).json({ success: false, error: sanitizeErrorMessage(err, 'Failed to create document') });
   }
 }
