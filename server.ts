@@ -142,6 +142,7 @@ app.post('/api/agents/execute', authenticateToken, requireResourcePermission('ag
 // Error Handling Middleware
 app.use(errorHandler);
 
+// Standalone Server Starter (For Local Development / Docker / Non-Serverless environments)
 async function startServer() {
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({
@@ -161,12 +162,9 @@ async function startServer() {
   });
 }
 
-startServer();
-
+// Only start standalone HTTP server when NOT running on Vercel and NOT in test environment
 if (!process.env.VERCEL && process.env.NODE_ENV !== 'test') {
-  app.listen(PORT, () => {
-    console.log(`Server running on port ${PORT}`);
-  });
+  startServer();
 }
 
 export default app;
