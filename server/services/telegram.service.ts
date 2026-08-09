@@ -253,10 +253,14 @@ export async function sendMessageToTelegram(
         reply_to_message_id: replyToMessageId,
       }),
     });
-    return res.ok;
+    if (!res.ok) {
+      const errorText = await res.text();
+      throw new Error(`Telegram API Error: ${res.status} - ${errorText}`);
+    }
+    return true;
   } catch (err) {
     console.warn('[Telegram Service] Failed to send message to Telegram API:', err);
-    return false;
+    throw err;
   }
 }
 
@@ -374,15 +378,29 @@ export const processTelegramUpdate = async (update: any): Promise<TelegramProces
       }
     }
 
-    // Extract message from webhook payload
-    const message = update.message || update;
-    const chatId = message?.chat?.id || update.chatId || 'default_chat';
-    const telegramUserId = message?.from?.id;
-    const messageId = message?.message_id;
-    const senderName = message?.from?.first_name || message?.from?.username || 'Field Rep';
+    // Extract message from webhook payload robustly
+    const payload = update.message || update.callback_query?.message || update.edited_message || update.channel_post || update;
+    const chatId = payload?.chat?.id || update.chatId;
 
-    const textInput: string = message?.text || update.text || '';
-    const voiceObj = message?.voice || message?.audio || update.voice;
+    if (!chatId) {
+      console.warn('[Telegram Service] Could not determine chat ID from update payload.');
+      return { success: false, reply: 'Invalid payload' };
+    }
+
+    // KFOS-BUG-003: Chat ID Authorization Check
+    if (config.allowedTelegramChatIds.length > 0 && !config.allowedTelegramChatIds.includes(String(chatId))) {
+      const authMsg = `Unauthorized access. Your Chat ID is ${chatId}. Please contact the administrator.`;
+      await sendMessageToTelegram(chatId, authMsg);
+      return { success: false, error: 'Unauthorized Chat ID', reply: authMsg };
+    }
+
+    const sender = update.callback_query?.from || payload?.from;
+    const telegramUserId = sender?.id;
+    const messageId = payload?.message_id;
+    const senderName = sender?.first_name || sender?.username || 'Field Rep';
+
+    const textInput: string = update.callback_query?.data || payload?.text || update.text || '';
+    const voiceObj = payload?.voice || payload?.audio || update.voice;
 
     // 2. Handle Telegram Commands
     if (textInput.startsWith('/')) {
@@ -841,16 +859,33 @@ export const processTelegramUpdate = async (update: any): Promise<TelegramProces
         `• Premium Grade: ${prem} cans`;
     } else if (nluResult.intent === 'CHECK_SALES' || nluResult.intent === 'CHECK_PROFIT') {
       const orders = await ordersRepository.getAll();
+      const expenses = await expensesRepository.getAll();
       const todayStr = getIndiaDateString(); // India timezone
-      const todayOrders = orders.filter(o => o.orderDate && o.orderDate.startsWith(todayStr));
+
+      const todayOrders = orders.filter(o => {
+        if (!o.orderDate || o.isArchived || o.isReturned) return false;
+        const istDate = new Date(o.orderDate).toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
+        return istDate === todayStr;
+      });
+
+      const todayExpenses = expenses.filter(e => {
+        if (!e.date) return false;
+        const istDate = new Date(e.date).toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
+        return istDate === todayStr;
+      });
+
       const totalSales = todayOrders.reduce((sum, o) => sum + (o.totalAmount || 0), 0);
-      const totalProfit = todayOrders.reduce((sum, o) => sum + (o.totalProfit || 0), 0);
+      const grossProfit = todayOrders.reduce((sum, o) => sum + (o.totalProfit || 0), 0);
+      const totalExpenseAmount = todayExpenses.reduce((sum, e) => sum + (e.amount || 0), 0);
+      const netProfit = grossProfit - totalExpenseAmount;
 
       replyText =
         `📊 Today's Business Performance:\n` +
         `• Total Orders: ${todayOrders.length}\n` +
         `• Total Sales Revenue: ₹${totalSales.toLocaleString('en-IN')}\n` +
-        `• Total Realized Profit: ₹${totalProfit.toLocaleString('en-IN')}`;
+        `• Gross Profit: ₹${grossProfit.toLocaleString('en-IN')}\n` +
+        `• Total Expenses: ₹${totalExpenseAmount.toLocaleString('en-IN')}\n` +
+        `• Net Profit: ₹${netProfit.toLocaleString('en-IN')}`;
     } else if (nluResult.intent === 'CHECK_CUSTOMER' || nluResult.intent === 'CHECK_OUTSTANDING') {
       if (nluResult.customerName) {
         const matchRes = await matchCustomerSafe(nluResult.customerName);
@@ -962,10 +997,15 @@ export const processTelegramUpdate = async (update: any): Promise<TelegramProces
   } catch (err: any) {
     console.error('[Telegram Service Error]', err);
     // Sanitize user reply
+    const errorMsg = '❌ An error occurred while processing your request. Please try again.';
+    if (update?.message?.chat?.id || update?.chatId) {
+      const chatId = update?.message?.chat?.id || update?.chatId;
+      await sendMessageToTelegram(chatId, errorMsg);
+    }
     return {
       success: false,
       error: 'Processing error',
-      reply: '❌ An error occurred while processing your request. Please try again.',
+      reply: errorMsg,
     };
   }
 };

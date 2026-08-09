@@ -20,24 +20,23 @@ export const handleTelegramWebhook = async (req: Request, res: Response) => {
       return res.status(400).json({ success: false, error: 'Invalid update body' });
     }
 
-    const result = await processTelegramUpdate(update);
+    // KFOS-BUG-004: Acknowledge Telegram webhook immediately with HTTP 200
+    res.status(200).json({ success: true, message: 'Processing started' });
 
-    return res.status(200).json({
-      success: result.success,
-      duplicate: result.duplicate || false,
-      intent: result.intent,
-      reply: result.reply,
-      pendingActionCreated: result.pendingActionCreated || false,
-      actionExecuted: result.actionExecuted || false,
+    // Process asynchronously without blocking response
+    processTelegramUpdate(update).catch((err) => {
+      console.error('[Telegram Controller] Background Processing Error:', err);
     });
   } catch (err: any) {
-    console.error('[Telegram Controller] Webhook Processing Error:', err);
-    // Sanitize error output - do not leak internal stack traces or internal errors to client
-    return res.status(200).json({
-      success: false,
-      error: 'Telegram update processing failed',
-      reply: '❌ An error occurred while processing your message. Please try again.',
-    });
+    console.error('[Telegram Controller] Webhook Processing Error:', err.message, err.stack);
+    
+    // Only send response if headers haven't been sent yet
+    if (!res.headersSent) {
+      return res.status(500).json({
+        success: false,
+        error: 'Telegram update processing failed due to internal server error.',
+      });
+    }
   }
 };
 

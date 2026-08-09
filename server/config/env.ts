@@ -47,6 +47,7 @@ export const config = {
   jwtSecret: process.env.JWT_SECRET || 'kfos_jwt_secret_key_dev_only',
   telegramBotToken: process.env.TELEGRAM_BOT_TOKEN || '',
   telegramWebhookSecret: process.env.TELEGRAM_WEBHOOK_SECRET || 'kfos_telegram_webhook_secret_dev_only',
+  allowedTelegramChatIds: process.env.ALLOWED_TELEGRAM_CHAT_IDS ? process.env.ALLOWED_TELEGRAM_CHAT_IDS.split(',').map(s => s.trim()) : [],
   appUrl: process.env.APP_URL || 'http://localhost:3000',
   isProduction,
 };

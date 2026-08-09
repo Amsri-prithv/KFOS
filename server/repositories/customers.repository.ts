@@ -49,13 +49,26 @@ export const customersRepository = {
     if (!data.phone || !data.phone.trim()) {
       throw new Error('Customer phone number is required');
     }
+    
+    const cleanPhone = data.phone.trim();
+    
+    const existingSnap = await getCollectionRef(COLLECTIONS.CUSTOMERS)
+      .where('phone', '==', cleanPhone)
+      .limit(1)
+      .get();
+      
+    if (!existingSnap.empty) {
+      const existingDoc = existingSnap.docs[0];
+      return { id: existingDoc.id, ...existingDoc.data() } as CustomerDoc;
+    }
+
     const docId = data.id || `cust-${randomUUID()}`;
     const prepared = prepareDataForInsert({
       id: docId,
       name: data.name.trim(),
       businessName: data.businessName?.trim() || data.name.trim(),
       place: data.place.trim(),
-      phone: data.phone.trim(),
+      phone: cleanPhone,
       outstandingBalance: 0,
       free200mlSamplesUsed: 0,
       totalOrdersCount: 0,
