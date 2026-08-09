@@ -21,7 +21,12 @@ function sanitizeErrorMessage(err: any, defaultMsg: string): string {
     msg.includes('Invalid') ||
     msg.includes('prohibited') ||
     msg.includes('not found') ||
-    msg.includes('maximum');
+    msg.includes('maximum') ||
+    msg.includes('exceed') ||
+    msg.includes('cannot') ||
+    msg.includes('balance') ||
+    msg.includes('negative') ||
+    msg.includes('finite');
 
   if (isValidationError) {
     return msg;
@@ -41,7 +46,7 @@ export async function getCustomers(req: Request, res: Response) {
 
 export async function createCustomer(req: Request, res: Response) {
   try {
-    const { name, phone, place } = req.body;
+    const { name, businessName, phone, place } = req.body;
     if (!name || typeof name !== 'string' || name.trim().length === 0) {
       return res.status(400).json({ success: false, error: 'Customer name is required' });
     }
@@ -54,8 +59,17 @@ export async function createCustomer(req: Request, res: Response) {
     if (place && (typeof place !== 'string' || place.length > 100)) {
       return res.status(400).json({ success: false, error: 'Invalid customer place name' });
     }
+    if (businessName && (typeof businessName !== 'string' || businessName.length > 100)) {
+      return res.status(400).json({ success: false, error: 'Invalid business name' });
+    }
 
-    const customer = await customersRepository.create(req.body);
+    // Pass ONLY whitelisted editable fields to prevent mass-assignment
+    const customer = await customersRepository.create({
+      name: name.trim(),
+      businessName: businessName?.trim() || name.trim(),
+      phone: phone?.trim() || '',
+      place: place?.trim() || '',
+    });
     res.json({ success: true, data: customer });
   } catch (err: any) {
     console.error('[Firestore] createCustomer error:', err);

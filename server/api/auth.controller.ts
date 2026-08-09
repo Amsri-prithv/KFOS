@@ -13,9 +13,10 @@ const LOCKOUT_DURATION = 60 * 1000; // 1 minute lockout
 const MAX_ATTEMPTS = 5;
 
 const getAttemptRef = (ip: string) => {
-  // Sanitize IP address so it is a safe Firestore document ID
-  const safeIp = ip.replace(/[^a-zA-Z0-9.-]/g, '_');
-  return firestoreDb.collection('authLoginAttempts').doc(safeIp);
+  // Deterministic cryptographic hash (SHA-256) of normalized IP address for Firestore doc ID
+  const normalizedIp = ip.trim().toLowerCase();
+  const ipHash = crypto.createHash('sha256').update(normalizedIp).digest('hex');
+  return firestoreDb.collection('authLoginAttempts').doc(ipHash);
 };
 
 function getIpAddress(req: Request): string {

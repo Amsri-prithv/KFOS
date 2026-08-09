@@ -90,6 +90,7 @@ const useNativeDb = isProduction || Boolean(process.env.FIREBASE_SERVICE_ACCOUNT
 // ============================================================================
 
 const baseUrl = `https://firestore.googleapis.com/v1/projects/${projectId}/databases/${databaseId || '(default)'}/documents`;
+let commitMutex = Promise.resolve();
 
 let cachedAccessToken: string | null = null;
 let tokenExpiresAt = 0;
@@ -177,7 +178,7 @@ function extractDocId(name: string): string {
 }
 
 function createMockFirestoreDb() {
-  const inMemoryDb: Record<string, Record<string, any>> = {};
+  const inMemoryDb: Record<string, Record<string, { data: any, version: number }>> = {};
 
   function getMemCollection(col: string) {
     if (!inMemoryDb[col]) inMemoryDb[col] = {};
@@ -195,7 +196,8 @@ function createMockFirestoreDb() {
         if (res.ok) {
           const json = await res.json();
           const dataObj = fromFirestoreFields(json.fields || {});
-          getMemCollection(this.collectionName)[this.id] = dataObj;
+          const existing = getMemCollection(this.collectionName)[this.id];
+          getMemCollection(this.collectionName)[this.id] = { data: dataObj, version: existing?.version || 0 };
           return {
             id: extractDocId(json.name || this.id),
             exists: true,
@@ -206,12 +208,12 @@ function createMockFirestoreDb() {
         // ignore in mock mode
       }
 
-      const memData = getMemCollection(this.collectionName)[this.id];
-      if (memData !== undefined) {
+      const memEntry = getMemCollection(this.collectionName)[this.id];
+      if (memEntry !== undefined) {
         return {
           id: this.id,
           exists: true,
-          data: () => memData,
+          data: () => memEntry.data,
         };
       }
 
@@ -219,7 +221,9 @@ function createMockFirestoreDb() {
     }
 
     async set(data: Record<string, any>): Promise<any> {
-      getMemCollection(this.collectionName)[this.id] = { ...data };
+      const existing = getMemCollection(this.collectionName)[this.id];
+      getMemCollection(this.collectionName)[this.id] = { data: { ...data }, version: (existing?.version || 0) + 1 };
+      
       const isTestEnv = process.env.NODE_ENV === 'test' || process.env.VITEST === 'true' || !apiKey;
       try {
         const patchUrl = `${baseUrl}/${this.collectionName}/${this.id}?key=${apiKey}`;
@@ -248,8 +252,8 @@ function createMockFirestoreDb() {
     }
 
     async update(updates: Record<string, any>): Promise<any> {
-      const existing = getMemCollection(this.collectionName)[this.id] || {};
-      getMemCollection(this.collectionName)[this.id] = { ...existing, ...updates };
+      const existing = getMemCollection(this.collectionName)[this.id] || { data: {}, version: 0 };
+      getMemCollection(this.collectionName)[this.id] = { data: { ...existing.data, ...updates }, version: existing.version + 1 };
 
       const isTestEnv = process.env.NODE_ENV === 'test' || process.env.VITEST === 'true' || !apiKey;
       try {
@@ -281,7 +285,10 @@ function createMockFirestoreDb() {
     }
 
     async delete(): Promise<any> {
-      delete getMemCollection(this.collectionName)[this.id];
+      const existing = getMemCollection(this.collectionName)[this.id];
+      if (existing) {
+        getMemCollection(this.collectionName)[this.id] = { data: null, version: existing.version + 1 };
+      }
       const isTestEnv = process.env.NODE_ENV === 'test' || process.env.VITEST === 'true' || !apiKey;
       try {
         const url = `${baseUrl}/${this.collectionName}/${this.id}?key=${apiKey}`;
@@ -329,7 +336,8 @@ function createMockFirestoreDb() {
           documents.forEach((docJson: any) => {
             const docId = extractDocId(docJson.name);
             const dataObj = fromFirestoreFields(docJson.fields || {});
-            getMemCollection(this.collectionName)[docId] = dataObj;
+            const existing = getMemCollection(this.collectionName)[docId];
+            getMemCollection(this.collectionName)[docId] = { data: dataObj, version: (existing?.version || 0) + 1 };
           });
         }
       } catch (err) {
@@ -337,10 +345,10 @@ function createMockFirestoreDb() {
       }
 
       const colObj = getMemCollection(this.collectionName);
-      const docs = Object.entries(colObj).map(([id, data]) => ({
+      const docs = Object.entries(colObj).map(([id, entry]) => ({
         id,
         exists: true,
-        data: () => data,
+        data: () => entry.data,
       }));
 
       return { docs };
@@ -375,9 +383,14 @@ function createMockFirestoreDb() {
     }
   }
 
-  let mockTransactionChain: Promise<any> = Promise.resolve();
-
   const db = {
+    commitMutex: Promise.resolve(),
+    reset() {
+      for (const key in inMemoryDb) {
+        delete inMemoryDb[key];
+      }
+      this.commitMutex = Promise.resolve();
+    },
     collection(name: string) {
       return new HybridCollectionRef(name);
     },
@@ -385,82 +398,108 @@ function createMockFirestoreDb() {
       return new HybridBatch();
     },
     async runTransaction(updateFunction: (transaction: any) => Promise<any>) {
-      const resultPromise = new Promise((resolve, reject) => {
-        mockTransactionChain = mockTransactionChain.then(async () => {
-          const txChanges: Array<{ col: string; id: string; originalVal: any; hadValue: boolean }> = [];
+      let attempts = 0;
+      while (attempts < 50) {
+        const snapshot = JSON.parse(JSON.stringify(inMemoryDb));
+        const txWrites: Array<{ type: 'set' | 'update' | 'delete'; ref: HybridDocRef; data?: any }> = [];
+        const txReads: Map<string, { exists: boolean, version: number, data: any }> = new Map();
 
-          const transactionObject = {
-            async get(ref: HybridDocRef) {
-              return await ref.get();
-            },
-            set(ref: HybridDocRef, data: any) {
-              const col = ref.collectionName;
-              const id = ref.id;
-              const memCol = getMemCollection(col);
-              const hadValue = id in memCol;
-              txChanges.push({
-                col,
-                id,
-                originalVal: hadValue ? JSON.parse(JSON.stringify(memCol[id])) : undefined,
-                hadValue,
-              });
-              return ref.set(data);
-            },
-            update(ref: HybridDocRef, data: any) {
-              const col = ref.collectionName;
-              const id = ref.id;
-              const memCol = getMemCollection(col);
-              const hadValue = id in memCol;
-              txChanges.push({
-                col,
-                id,
-                originalVal: hadValue ? JSON.parse(JSON.stringify(memCol[id])) : undefined,
-                hadValue,
-              });
-              return ref.update(data);
-            },
-            delete(ref: HybridDocRef) {
-              const col = ref.collectionName;
-              const id = ref.id;
-              const memCol = getMemCollection(col);
-              const hadValue = id in memCol;
-              txChanges.push({
-                col,
-                id,
-                originalVal: hadValue ? JSON.parse(JSON.stringify(memCol[id])) : undefined,
-                hadValue,
-              });
-              return ref.delete();
-            },
-          };
-
-          try {
-            const result = await updateFunction(transactionObject);
-            resolve(result);
-          } catch (err) {
-            console.warn('[Mock Firestore Transaction] Transaction failed, rolling back only this transaction\'s in-memory mutations.');
-            for (let i = txChanges.length - 1; i >= 0; i--) {
-              const change = txChanges[i];
-              const memCol = getMemCollection(change.col);
-              if (change.hadValue) {
-                memCol[change.id] = change.originalVal;
-              } else {
-                delete memCol[change.id];
-              }
+        const transactionObject = {
+          async get(ref: HybridDocRef) {
+            const key = `${ref.collectionName}/${ref.id}`;
+            const pendingWrite = [...txWrites].reverse().find(w => w.ref.collectionName === ref.collectionName && w.ref.id === ref.id);
+            if (pendingWrite) {
+              if (pendingWrite.type === 'delete') return { exists: false, data: () => null };
+              return { exists: true, data: () => pendingWrite.data };
             }
-            reject(err);
-          }
-        }).catch(() => {
-          // Prevent the chain from breaking/halting if a transaction fails
-        });
-      });
+            
+            if (!txReads.has(key)) {
+              const entry = snapshot[ref.collectionName]?.[ref.id];
+              txReads.set(key, { exists: !!entry, version: entry?.version || 0, data: entry?.data || null });
+            }
+            
+            const readEntry = txReads.get(key)!;
+            return { exists: readEntry.exists, data: () => readEntry.data };
+          },
+          set(ref: HybridDocRef, data: any) {
+            txWrites.push({ type: 'set', ref, data });
+          },
+          update(ref: HybridDocRef, data: any) {
+            const existing = [...txWrites].reverse().find(w => w.ref.collectionName === ref.collectionName && w.ref.id === ref.id);
+            if (existing && existing.type !== 'delete') {
+              existing.data = { ...existing.data, ...data };
+            } else {
+              const entry = snapshot[ref.collectionName]?.[ref.id] || { data: {}, version: 0 };
+              txWrites.push({ type: 'update', ref, data: { ...entry.data, ...data } });
+            }
+          },
+          delete(ref: HybridDocRef) {
+            txWrites.push({ type: 'delete', ref });
+          },
+        };
 
-      return resultPromise;
+        try {
+          const result = await updateFunction(transactionObject);
+
+          let commitResult: any;
+          let commitError: any = null;
+          
+          this.commitMutex = this.commitMutex.then(async () => {
+            try {
+              // Atomic commit with conflict check: check all reads
+              for (const [key, readSnap] of txReads.entries()) {
+                const [col, id] = key.split('/');
+                const currentEntry = inMemoryDb[col]?.[id];
+                const currentVersion = currentEntry?.version || 0;
+                
+                if (currentVersion !== readSnap.version) {
+                  throw new Error('Conflict');
+                }
+              }
+
+              // Apply writes
+              for (const write of txWrites) {
+                const col = write.ref.collectionName;
+                const id = write.ref.id;
+                if (!inMemoryDb[col]) inMemoryDb[col] = {};
+                
+                const existing = inMemoryDb[col][id] || { data: {}, version: 0 };
+                
+                if (write.type === 'delete') {
+                  inMemoryDb[col][id] = { data: null, version: existing.version + 1 };
+                } else {
+                  inMemoryDb[col][id] = { data: write.data, version: existing.version + 1 };
+                }
+              }
+              commitResult = result;
+            } catch (err) {
+              commitError = err;
+            }
+          });
+          
+          await this.commitMutex;
+          
+          if (commitError) {
+            throw commitError;
+          }
+
+          return commitResult;
+        } catch (err: any) {
+          if (err.message === 'Conflict') {
+            attempts++;
+            continue;
+          }
+          throw err;
+        }
+      }
+      throw new Error('Transaction failed after max retries');
     }
   };
 
+
   return db;
 }
+
 
 // Strictly export the database instance.
 export const firestoreDb: any = useNativeDb

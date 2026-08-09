@@ -28,7 +28,18 @@ export const customersRepository = {
     return { id: doc.id, ...doc.data() } as CustomerDoc;
   },
 
-  async create(data: Omit<CustomerDoc, 'id' | 'createdAt' | 'updatedAt'> & { id?: string }): Promise<CustomerDoc> {
+  async create(data: {
+    id?: string;
+    name: string;
+    businessName?: string;
+    place: string;
+    phone: string;
+    outstandingBalance?: number;
+    free200mlSamplesUsed?: number;
+    totalOrdersCount?: number;
+    totalSpent?: number;
+    isArchived?: boolean;
+  }): Promise<CustomerDoc> {
     if (!data.name || !data.name.trim()) {
       throw new Error('Customer name is required');
     }
@@ -45,11 +56,11 @@ export const customersRepository = {
       businessName: data.businessName?.trim() || data.name.trim(),
       place: data.place.trim(),
       phone: data.phone.trim(),
-      outstandingBalance: typeof data.outstandingBalance === 'number' ? data.outstandingBalance : 0,
-      free200mlSamplesUsed: typeof data.free200mlSamplesUsed === 'number' ? data.free200mlSamplesUsed : 0,
-      totalOrdersCount: typeof data.totalOrdersCount === 'number' ? data.totalOrdersCount : 0,
-      totalSpent: typeof data.totalSpent === 'number' ? data.totalSpent : 0,
-      isArchived: Boolean(data.isArchived),
+      outstandingBalance: 0,
+      free200mlSamplesUsed: 0,
+      totalOrdersCount: 0,
+      totalSpent: 0,
+      isArchived: false,
     });
 
     await getCollectionRef(COLLECTIONS.CUSTOMERS).doc(docId).set(prepared);
@@ -64,8 +75,16 @@ export const customersRepository = {
     notes?: string;
   }): Promise<{ payment: any; customer: CustomerDoc }> {
     return await firestoreDb.runTransaction(async (tx) => {
-      if (params.amount <= 0) {
-        throw new Error('Payment amount must be greater than 0');
+      // B. Validate payment amount strictly
+      if (typeof params.amount !== 'number' || Number.isNaN(params.amount) || !Number.isFinite(params.amount) || params.amount <= 0 || params.amount > 1e9) {
+        throw new Error('Payment amount must be a positive finite number less than 1,000,000,000');
+      }
+
+      // C. Validate idempotencyKey
+      if (params.idempotencyKey !== undefined) {
+        if (typeof params.idempotencyKey !== 'string' || params.idempotencyKey.length < 1 || params.idempotencyKey.length > 100 || !/^[a-zA-Z0-9_\-]+$/.test(params.idempotencyKey)) {
+          throw new Error('Invalid idempotency key format. Must be an alphanumeric string up to 100 characters.');
+        }
       }
 
       // Check Idempotency if key provided
@@ -93,6 +112,11 @@ export const customersRepository = {
         throw new Error(`Customer with ID ${params.customerId} not found`);
       }
       const customer = custSnap.data() as CustomerDoc;
+
+      // A. A payment must NEVER make outstandingBalance negative
+      if (params.amount > customer.outstandingBalance) {
+        throw new Error('Payment amount cannot exceed customer outstanding balance');
+      }
 
       // Compute exact mathematical balance (no silent clamping)
       const newBalance = customer.outstandingBalance - params.amount;

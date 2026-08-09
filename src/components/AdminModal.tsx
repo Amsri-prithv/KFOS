@@ -28,9 +28,6 @@ export const AdminModal: React.FC<AdminModalProps> = ({
       });
       const data = await res.json();
       if (data.success) {
-        if (data.user?.role) {
-          localStorage.setItem('kfos_role', data.user.role);
-        }
         onUnlockSuccess();
         setPinInput('');
         setErrorMsg('');
@@ -81,7 +78,6 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                 } catch (e) {
                   console.warn('Logout error:', e);
                 }
-                localStorage.removeItem('kfos_role');
                 onLock();
               }}
               className="w-full py-2.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 font-bold text-xs rounded-xl transition-all"

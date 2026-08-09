@@ -1,10 +1,13 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach } from 'vitest';
 import { verifyNoPinCollisions } from '../config/env.js';
 import { resolveRoleFromPin, handleLogin } from '../api/auth.controller.js';
 import { Role } from '../config/permissions.js';
-import { firestoreDb } from '../firebase/firestore.js';
+import { firestoreDb } from '../firebase/admin.js';
 
 describe('Role PIN Security & Collision Tests', () => {
+  beforeEach(() => {
+    firestoreDb.reset();
+  });
   const uniqueConfig = {
     founderPin: '1000',
     adminPin: '2000',

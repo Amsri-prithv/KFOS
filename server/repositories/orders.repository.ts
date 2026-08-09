@@ -142,7 +142,17 @@ export const ordersRepository = {
         }));
       }
 
-      const paidAmount = Math.min(Math.max(0, data.paidAmount || 0), orderTotalAmount);
+      const inputPaidAmount = data.paidAmount !== undefined ? data.paidAmount : 0;
+      if (typeof inputPaidAmount !== 'number' || Number.isNaN(inputPaidAmount) || !Number.isFinite(inputPaidAmount)) {
+        throw new Error('Paid amount must be a finite number');
+      }
+      if (inputPaidAmount < 0) {
+        throw new Error('Paid amount cannot be negative');
+      }
+      if (inputPaidAmount > orderTotalAmount) {
+        throw new Error('Paid amount cannot exceed total order amount');
+      }
+      const paidAmount = inputPaidAmount;
       const unpaidBalance = orderTotalAmount - paidAmount;
 
       let paymentStatus: Order['paymentStatus'] = 'Unpaid';

@@ -75,17 +75,12 @@ export default function App() {
       .then((data) => {
         if (data && data.authenticated) {
           setIsAdminUnlocked(true);
-          if (data.user?.role) {
-            localStorage.setItem('kfos_role', data.user.role);
-          }
         } else {
           setIsAdminUnlocked(false);
-          localStorage.removeItem('kfos_role');
         }
       })
       .catch(() => {
         setIsAdminUnlocked(false);
-        localStorage.removeItem('kfos_role');
       });
 
     // 2. Subscribe to kfosStore changes
@@ -97,7 +92,6 @@ export default function App() {
     // 3. Listen for global unauthorized events
     const handleUnauthorized = () => {
       setIsAdminUnlocked(false);
-      localStorage.removeItem('kfos_role');
     };
     window.addEventListener('kfos-unauthorized', handleUnauthorized);
 

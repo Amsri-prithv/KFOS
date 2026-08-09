@@ -1,4 +1,5 @@
-import { describe, it, expect, beforeAll } from 'vitest';
+import { describe, it, expect, beforeAll, beforeEach } from 'vitest';
+import { firestoreDb } from '../server/firebase/admin.js';
 import { randomUUID } from 'node:crypto';
 import { claimAndExecutePendingActionAtomic } from '../server/services/telegram.service.js';
 import { customersRepository } from '../server/repositories/customers.repository.js';
@@ -6,26 +7,23 @@ import { ordersRepository } from '../server/repositories/orders.repository.js';
 import { inventoryRepository } from '../server/repositories/inventory.repository.js';
 
 describe('KFOS Production Safety & Concurrency E2E Test Suite', () => {
-  let testCustomerId: string;
-
-  beforeAll(async () => {
-    // Setup clean test customer in Firestore
-    const cust = await customersRepository.create({
-      name: 'E2E Test Customer Supermarket',
-      businessName: 'E2E Test Retail',
-      place: 'Trichy Test Zone',
-      phone: '+91 99999 11111',
-      outstandingBalance: 1000,
-      free200mlSamplesUsed: 0,
-      totalOrdersCount: 0,
-      totalSpent: 0,
-      isArchived: false,
-    });
-    testCustomerId = cust.id;
+  beforeEach(async () => {
+    firestoreDb.reset();
   });
 
   describe('1. Telegram Pending Action Concurrency Locking', () => {
     it('prevents double execution when two identical confirmation requests arrive simultaneously', async () => {
+      // Setup clean test customer in Firestore
+      const cust = await customersRepository.create({
+        name: 'E2E Test Customer Supermarket',
+        businessName: 'E2E Test Retail',
+        place: 'Trichy Test Zone',
+        phone: '+91 99999 11111',
+      });
+      // Test fixture explicitly injects financial state bypassing create() mass-assignment protection
+      await firestoreDb.collection('customers').doc(cust.id).set({ outstandingBalance: 1000 }, { merge: true });
+      const testCustomerId = cust.id;
+
       const chatId = 'test_chat_concurrency_999';
       const telegramUserId = 'test_user_777';
 
@@ -190,12 +188,9 @@ describe('KFOS Production Safety & Concurrency E2E Test Suite', () => {
         name: 'Concurrent Payment Test Customer',
         place: 'Erode',
         phone: `+91 94444 ${Math.floor(10000 + Math.random() * 90000)}`,
-        outstandingBalance: 10000,
-        free200mlSamplesUsed: 0,
-        totalOrdersCount: 0,
-        totalSpent: 0,
-        isArchived: false,
       });
+      // Test fixture explicitly injects financial state bypassing create() mass-assignment protection
+      await firestoreDb.collection('customers').doc(cust.id).set({ outstandingBalance: 10000 }, { merge: true });
 
       // Send ₹4000 and ₹3000 payments simultaneously
       const [res1, res2] = await Promise.allSettled([
@@ -224,12 +219,9 @@ describe('KFOS Production Safety & Concurrency E2E Test Suite', () => {
         name: 'Idempotency Test Customer',
         place: 'Salem',
         phone: `+91 93333 ${Math.floor(10000 + Math.random() * 90000)}`,
-        outstandingBalance: 5000,
-        free200mlSamplesUsed: 0,
-        totalOrdersCount: 0,
-        totalSpent: 0,
-        isArchived: false,
       });
+      // Test fixture explicitly injects financial state bypassing create() mass-assignment protection
+      await firestoreDb.collection('customers').doc(cust.id).set({ outstandingBalance: 5000 }, { merge: true });
 
       const key = `key-${randomUUID()}`;
 

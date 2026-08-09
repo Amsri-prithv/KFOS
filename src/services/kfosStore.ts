@@ -85,7 +85,6 @@ class KFOSStore {
       headers: finalHeaders,
     });
     if (res.status === 401) {
-      localStorage.removeItem('kfos_role');
       if (typeof window !== 'undefined') {
         window.dispatchEvent(new CustomEvent('kfos-unauthorized'));
       }
