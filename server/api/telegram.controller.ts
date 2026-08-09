@@ -1,5 +1,5 @@
 import express from 'express';
-import { telegramService } from '../services/telegram.service.js';
+import { processTelegramUpdate, processDirectMessage } from '../services/telegram.service.js';
 
 export const handleTelegramWebhook = async (req: express.Request, res: express.Response) => {
   try {
@@ -10,11 +10,11 @@ export const handleTelegramWebhook = async (req: express.Request, res: express.R
       return res.status(400).json({ status: 'error', message: 'No update payload received' });
     }
 
-    // Return 200 OK to Telegram immediately to prevent webhook timeouts
+    // Acknowledge Telegram webhook immediately (200 OK) to prevent timeouts
     res.status(200).json({ status: 'ok' });
 
-    // Process Telegram update asynchronously in background
-    telegramService.processTelegramUpdate(update).catch((err) => {
+    // Process Telegram update asynchronously in the background
+    processTelegramUpdate(update).catch((err) => {
       console.error('[Telegram Webhook Processing Error]:', err);
     });
   } catch (error: any) {
@@ -31,7 +31,7 @@ export const handleTelegramMessage = async (req: express.Request, res: express.R
     if (!message || !chatId) {
       return res.status(400).json({ success: false, error: 'Message and chatId are required' });
     }
-    const response = await telegramService.processDirectMessage(message, chatId);
+    const response = await processDirectMessage(message, chatId);
     return res.json({ success: true, reply: response });
   } catch (error: any) {
     console.error('[Telegram Message Controller Error]:', error);
